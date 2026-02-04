@@ -202,7 +202,22 @@ class DocumentChunker:
             sentences = [p.strip() for p in parts if p.strip()]
         
         return sentences
-    
+
+    def _merge_short_sentences(self, sentences: List[str]) -> List[str]:
+        """合并长度小于等于3的短句子到前一个句子"""
+        if not sentences:
+            return sentences
+        
+        merged = []
+        for sentence in sentences:
+            if len(sentence) <= 3 and merged:
+                merged[-1] = merged[-1] + ' ' + sentence
+            else:
+                merged.append(sentence)
+        
+        return merged
+
+
     def _chunk_by_sentence(
         self,
         content: str,
@@ -218,12 +233,15 @@ class DocumentChunker:
         if not sentences:
             return chunks
         
+        # 合并短句子
+        sentences = self._merge_short_sentences(sentences)
+
         current_chunk_sentences = []
         current_chunk_start = 0
         current_pos = 0
         chunk_index = 0
         
-        for sentence in sentences:
+        for idx,sentence in enumerate(sentences):
             # 找到句子在原文中的位置
             sent_start = content.find(sentence, current_pos)
             if sent_start == -1:
@@ -251,15 +269,22 @@ class DocumentChunker:
                     source_idx=source_idx,
                     chunk_index=chunk_index,
                     start_char=current_chunk_start,
-                    end_char=current_pos,
+                    end_char=sent_start,
                     strategy=ChunkStrategy.SENTENCE,
                     metadata=metadata or {},
                 ))
                 chunk_index += 1
                 
-                # 开始新分块
-                current_chunk_sentences = [sentence]
-                current_chunk_start = sent_start
+                # 开始新分块 - 添加句子重叠逻辑
+                overlap_sentences = []
+                if self.config.sentence_overlap > 0 and len(current_chunk_sentences) > 0:
+                    # 从当前分块的末尾取重叠句子（直接使用索引）
+                    overlap_sentences = sentences[max(0, idx  - self.config.sentence_overlap):idx]
+                
+                # 新分块包含重叠句子和当前句子
+                current_chunk_sentences = overlap_sentences + [sentence]
+                current_chunk_start = sent_start - sum(len(s) + 1 for s in overlap_sentences)
+
             else:
                 current_chunk_sentences.append(sentence)
             

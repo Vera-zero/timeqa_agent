@@ -34,6 +34,7 @@ class ChunkConfig:
     
     # 句子分块参数
     max_sentences: int = 10        # 每个分块最大句子数
+    sentence_overlap: int = 2      # 重叠句子数
     min_chunk_size: int = 500      # 最小分块大小（字符数）
     max_chunk_size: int = 2000     # 最大分块大小（字符数）
     

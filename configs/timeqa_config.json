@@ -1,9 +1,10 @@
 {
   "chunk": {
-    "strategy": "fixed_size",
+    "strategy": "sentence",
     "chunk_size": 1500,
     "chunk_overlap": 100,
     "max_sentences": 10,
+    "sentence_overlap": 2,
     "min_chunk_size": 500,
     "max_chunk_size": 2000,
     "preserve_sentences": true
