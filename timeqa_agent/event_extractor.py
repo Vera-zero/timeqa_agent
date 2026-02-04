@@ -127,6 +127,12 @@ You are an expert in temporal event extraction. Your task is to comprehensively 
 1. **Completeness**: You must extract ALL events containing temporal information from the text. Do not miss any.
 2. **Accuracy**: Preserve the original sentence and accurately identify time expressions.
 3. **Entity Recognition**: Identify all entities involved in the event with their canonical names and descriptions.
+   - **For singular entities**: Extract as usual.
+   - **For plural/compound entities** (e.g., "they", "their", "the couple", "both", etc.):
+     - First, identify the compound entity as a whole (e.g., "They").
+     - Then, identify **each individual entity** that constitutes the compound entity.
+     - Use the naming pattern: For the compound entity, use its original name (e.g., "They"). For individual parts, use the pattern "[compound_entity_name]_part" (e.g., "They_part").
+     - Provide canonical names and descriptions for **each** individual entity based on context.
 4. **Time Classification**:
    - point: Events occurring at a specific point in time, e.g., "In 1959 he was made a Queen's Counsel"
    - range: Events spanning a period of time, e.g., "served as Chief of the Defence Staff from 1961 to 1967"
@@ -141,9 +147,19 @@ Output a JSON object containing an events array:
       "event_description": "A concise description of the event",
       "entities": [
         {
-          "name": "The entity name as it appears in the text",
-          "canonical_name": "The standardized/full name of the entity (e.g., 'Samuel Knox Cunningham' instead of 'Cunningham')",
-          "description": "A brief description of the entity based on context (e.g., 'Northern Irish barrister and politician')"
+          "name": "The entity name as it appears in the text (e.g., 'They')",
+          "canonical_name": "The standardized/full name of the entity (e.g., 'Arnulf Øverland and Bartholine Eufemia Leganger')",
+          "description": "A brief description of the entity based on context (e.g., 'Married couple who divorced')"
+        },
+        {
+          "name": "They_part",
+          "canonical_name": "Arnulf Øverland",
+          "description": "One of the married couple who divorced"
+        },
+        {
+          "name": "They_part",
+          "canonical_name": "Bartholine Eufemia Leganger",
+          "description": "One of the married couple who divorced"
         }
       ],
       "time_type": "point or range",
@@ -160,7 +176,11 @@ Output a JSON object containing an events array:
 2. A single sentence may contain multiple temporal events; extract them separately
 3. Preserve the original form of time expressions
 4. Always provide clear canonical names and descriptions to help identify entities
+5. **For plural/compound entities**: You MUST identify each constituent individual entity. The `entities` array should contain the compound entity entry PLUS entries for each individual part.
+6. If the context does not provide enough information to identify individual entities within a compound reference, make reasonable inferences based on available information and note any uncertainties in the description.
+```
 """
+
 
 EXTRACTION_USER_PROMPT = """Extract all temporal events from the following text:
 
@@ -170,7 +190,8 @@ EXTRACTION_USER_PROMPT = """Extract all temporal events from the following text:
 ## Text Content
 {content}
 
-Please comprehensively extract all events containing temporal information and output in JSON format:"""
+Please comprehensively extract all events containing temporal information and output in JSON format:
+"""
 
 
 class EventExtractor:
