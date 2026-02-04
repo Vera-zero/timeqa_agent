@@ -16,7 +16,10 @@
     "max_retries": 3,
     "timeout": 180,
     "batch_size": 1,
-    "include_implicit_time": true
+    "include_implicit_time": true,
+    "enable_multi_round": true,
+    "max_rounds": 2,
+    "review_temperature": 0.0
   },
   "disambiguator": {
     "embed_model": "deepseek-embed",

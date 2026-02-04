@@ -69,6 +69,11 @@ class ExtractorConfig:
     batch_size: int = 1            # 每次处理的分块数（目前只支持1）
     include_implicit_time: bool = True  # 是否包含隐式时间引用
     
+    # 多轮抽取配置
+    enable_multi_round: bool = True    # 是否启用多轮抽取
+    max_rounds: int = 2               # 最大抽取轮数
+    review_temperature: float = 0.0   # 审查轮次的温度参数
+
     def to_dict(self) -> Dict[str, Any]:
         """转换为字典"""
         return asdict(self)
