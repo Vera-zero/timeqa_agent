@@ -120,7 +120,8 @@ class TimeEvent:
 
 
 # Time Event Extraction Prompt
-EXTRACTION_SYSTEM_PROMPT = """You are an expert in temporal event extraction. Your task is to comprehensively extract all events containing temporal information from the given text.
+EXTRACTION_SYSTEM_PROMPT = """
+You are an expert in temporal event extraction. Your task is to comprehensively extract all events containing temporal information from the given text.
 
 ## Extraction Rules
 1. **Completeness**: You must extract ALL events containing temporal information from the text. Do not miss any.
