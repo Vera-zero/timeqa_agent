@@ -1,0 +1,85 @@
+{
+  "chunk": {
+    "strategy": "fixed_size",
+    "chunk_size": 1500,
+    "chunk_overlap": 100,
+    "max_sentences": 10,
+    "min_chunk_size": 500,
+    "max_chunk_size": 2000,
+    "preserve_sentences": true
+  },
+  "extractor": {
+    "model": "deepseek-chat",
+    "base_url": "https://api.deepseek.com/chat/completions",
+    "temperature": 0,
+    "max_retries": 3,
+    "timeout": 180,
+    "batch_size": 1,
+    "include_implicit_time": true
+  },
+  "disambiguator": {
+    "embed_model": "deepseek-embed",
+    "embed_base_url": "https://api.deepseek.com/v1",
+    "embed_batch_size": 100,
+    "similarity_threshold": 0.8,
+    "canonical_name_weight": 2.0
+  },
+  "timeline": {
+    "model": "deepseek-chat",
+    "base_url": "https://api.deepseek.com/chat/completions",
+    "temperature": 0,
+    "max_retries": 3,
+    "timeout": 180
+  },
+  "graph_store": {
+    "store_original_sentence": true,
+    "store_chunk_metadata": true,
+    "store_entity_aliases": true
+  },
+  "retriever": {
+    "top_k": 10,
+    "score_threshold": 0.0,
+    "include_metadata": true,
+    "fuzzy_match": true,
+    "case_sensitive": false,
+    "use_tfidf": true,
+    "min_keyword_length": 2,
+    "embedding_dim": 512,
+    "embed_batch_size": 32,
+    "similarity_threshold": 0.35,
+    "cache_embeddings": true,
+    "vector_index_type": "flat",
+    "vector_metric": "cosine",
+    "hnsw_m": 16,
+    "hnsw_ef_construction": 200,
+    "hnsw_ef_search": 50,
+    "keyword_weight": 0.3,
+    "semantic_weight": 0.7,
+    "fusion_mode": "rrf",
+    "rrf_k": 60.0,
+    "enable_keyword": true,
+    "enable_semantic": true
+  },
+  "voting": {
+    "entity_layer_weight": 0.25,
+    "timeline_layer_weight": 0.30,
+    "event_layer_weight": 0.45,
+    "entity_decay_factor": 0.85,
+    "timeline_decay_factor": 0.95,
+    "fusion_mode": "rrf",
+    "rrf_k": 60,
+    "min_votes": 1,
+    "min_score": 0.0,
+    "entity_retrieve_multiplier": 2.0,
+    "timeline_retrieve_multiplier": 2.0,
+    "event_retrieve_multiplier": 2.0,
+    "enable_entity_layer": true,
+    "enable_timeline_layer": true,
+    "enable_event_layer": true,
+    "vote_count_alpha": 0.25,
+    "vote_count_beta": 0.75
+  },
+  "data_dir": "data/timeqa",
+  "corpus_dir": "data/timeqa/corpus",
+  "output_dir": "data/timeqa/processed"
+}
