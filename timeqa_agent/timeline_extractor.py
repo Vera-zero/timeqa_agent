@@ -267,14 +267,16 @@ class TimelineExtractor:
         self,
         entity_canonical_name: str,
         events: List[TimeEvent],
+        timeline_id_offset: int = 0,
     ) -> TimelineExtractionResult:
         """
         Extract timelines for a specific entity
-        
+
         Args:
             entity_canonical_name: The canonical name of the entity
             events: List of events related to this entity
-            
+            timeline_id_offset: Starting offset for timeline IDs to ensure global uniqueness
+
         Returns:
             TimelineExtractionResult
         """
@@ -344,7 +346,7 @@ class TimelineExtractor:
             time_start, time_end = self._compute_time_span(events, event_ids)
             
             timeline = Timeline(
-                timeline_id=f"timeline-{i:04d}",
+                timeline_id=f"timeline-{timeline_id_offset + i:04d}",
                 entity_canonical_name=entity_canonical_name,
                 timeline_name=tl_data.get("timeline_name", f"Timeline {i+1}"),
                 description=tl_data.get("description", ""),
@@ -401,13 +403,20 @@ class TimelineExtractor:
         
         # Extract timelines for each entity
         results = {}
+        global_timeline_offset = 0  # 全局时间线ID计数器
         for entity_name, entity_event_list in entity_events.items():
             event_count = len(entity_event_list)
             if event_count == 1:
                 print(f"Skipping timeline extraction for: {entity_name} (only 1 event)")
             else:
                 print(f"Extracting timelines for: {entity_name} ({event_count} events)")
-            result = self.extract_timelines_for_entity(entity_name, entity_event_list)
+            result = self.extract_timelines_for_entity(
+                entity_name,
+                entity_event_list,
+                timeline_id_offset=global_timeline_offset,
+            )
             results[entity_name] = result
+            # 更新全局计数器
+            global_timeline_offset += len(result.timelines)
         
         return results
