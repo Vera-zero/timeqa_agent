@@ -14,7 +14,7 @@ from dataclasses import dataclass, field
 from typing import List, Optional, Dict, Any
 
 from .chunker import Chunk
-from .config import ExtractorConfig
+from .config import ExtractorConfig, PriorEventsContextMode
 
 
 class TimeType(str, Enum):
@@ -194,6 +194,24 @@ Please comprehensively extract all events containing temporal information and ou
 """
 
 
+# User prompt with prior extracted events context
+EXTRACTION_USER_PROMPT_WITH_CONTEXT = """Extract all temporal events from the following text:
+
+## Document Title
+{doc_title}
+
+## Prior Extracted Events (from previous text chunks)
+The following events have been extracted from earlier parts of this document. Use them as context to help resolve relative time expressions (e.g., "8 years old", "two years later", "at that time") by referencing these known temporal anchors.
+
+{prior_events}
+
+## Text Content (current chunk to extract from)
+{content}
+
+Please comprehensively extract all events containing temporal information and output in JSON format:
+"""
+
+
 # Review Prompt for Multi-Round Extraction
 REVIEW_SYSTEM_PROMPT = """
 You are an expert reviewer for temporal event extraction. Your task is to find any temporal events that were missed in the initial extraction.
@@ -278,6 +296,26 @@ REVIEW_USER_PROMPT = """Review the following text and the already extracted even
 Please identify any additional temporal events that were missed:"""
 
 
+# Review prompt with prior extracted events context
+REVIEW_USER_PROMPT_WITH_CONTEXT = """Review the following text and the already extracted events. Find any temporal events that were missed.
+
+## Document Title
+{doc_title}
+
+## Prior Extracted Events (from previous text chunks)
+The following events have been extracted from earlier parts of this document. Use them as context to help resolve relative time expressions.
+
+{prior_events}
+
+## Text Content (current chunk)
+{content}
+
+## Already Extracted Events (from current chunk)
+{existing_events}
+
+Please identify any additional temporal events that were missed:"""
+
+
 class EventExtractor:
     """时间事件抽取器"""
     
@@ -352,7 +390,7 @@ class EventExtractor:
         """格式化已提取的事件用于审查轮次"""
         if not events:
             return "None"
-        
+
         formatted = []
         for event in events:
             formatted.append({
@@ -363,78 +401,189 @@ class EventExtractor:
             })
         return json.dumps(formatted, indent=2, ensure_ascii=False)
 
-    def extract_from_chunk(self, chunk: Chunk) -> List[TimeEvent]:
+    def _format_prior_events(self, events: List[TimeEvent]) -> str:
+        """
+        格式化前置已抽取事件（精简格式）
+
+        精简格式只保留对时间推理有用的核心信息：
+        - 时间信息 (time/time_range)
+        - 事件描述 (event)
+        - 主要实体的标准名称 (entities)
+        """
+        if not events:
+            return "None"
+
+        formatted = []
+        for event in events:
+            # 构建精简的事件表示
+            entry = {
+                "event": event.event_description,
+                "entities": [e.canonical_name for e in event.entities[:3]],  # 最多保留3个主要实体
+            }
+
+            # 根据时间类型格式化时间信息
+            if event.time_type == TimeType.POINT:
+                entry["time"] = event.time_start
+            else:  # RANGE
+                entry["time_range"] = [event.time_start, event.time_end]
+
+            formatted.append(entry)
+
+        return json.dumps(formatted, indent=2, ensure_ascii=False)
+
+    def _get_prior_events(
+        self,
+        chunk_index: int,
+        all_extracted_events: Dict[int, List[TimeEvent]],
+    ) -> List[TimeEvent]:
+        """
+        根据配置获取前置已抽取事件
+
+        Args:
+            chunk_index: 当前分块索引
+            all_extracted_events: 所有已抽取事件的字典 {chunk_index: events}
+
+        Returns:
+            前置事件列表
+        """
+        if self.config.prior_events_context_mode == PriorEventsContextMode.NONE:
+            return []
+
+        if chunk_index == 0:
+            return []  # 第一个分块没有前置事件
+
+        prior_events = []
+
+        if self.config.prior_events_context_mode == PriorEventsContextMode.FULL:
+            # 全量模式：所有前置分块的事件
+            for i in range(chunk_index):
+                if i in all_extracted_events:
+                    prior_events.extend(all_extracted_events[i])
+
+        elif self.config.prior_events_context_mode == PriorEventsContextMode.SLIDING_WINDOW:
+            # 滑动窗口模式：第一个分块 + 当前分块前N个分块的事件
+            window_size = self.config.prior_events_window_size
+
+            # 始终包含第一个分块的事件
+            if 0 in all_extracted_events:
+                prior_events.extend(all_extracted_events[0])
+
+            # 添加当前分块前 window_size 个分块的事件（不重复添加第一个分块）
+            start_idx = max(1, chunk_index - window_size)
+            for i in range(start_idx, chunk_index):
+                if i in all_extracted_events:
+                    prior_events.extend(all_extracted_events[i])
+
+        return prior_events
+
+    def extract_from_chunk(
+        self,
+        chunk: Chunk,
+        prior_events: Optional[List[TimeEvent]] = None,
+    ) -> List[TimeEvent]:
         """
         从单个分块中抽取时间事件（支持多轮抽取）
-        
+
         Args:
             chunk: 文档分块
-            
+            prior_events: 前置已抽取事件（用于提供时间上下文）
+
         Returns:
             时间事件列表
         """
         all_events = []
-        
+        prior_events = prior_events or []
+
         # Round 1: 初始抽取
-        initial_events = self._extract_initial_events(chunk)
+        initial_events = self._extract_initial_events(chunk, prior_events)
         all_events.extend(initial_events)
         print(f"Round 1: 提取到 {len(initial_events)} 个事件")
-        
+
         # Round 2+: 审查轮次（如果启用多轮抽取）
         if self.config.enable_multi_round and len(initial_events) > 0:
             for round_num in range(2, self.config.max_rounds + 1):
-                review_events = self._extract_review_events(chunk, all_events, round_num)
+                review_events = self._extract_review_events(chunk, all_events, round_num, prior_events)
                 print(f"Round {round_num}: 审查发现 {len(review_events)} 个新事件")
                 if not review_events:  # 如果没有找到新事件，停止
                     break
                 all_events.extend(review_events)
-        
+
         # 去重和重新编号
         unique_events = self._deduplicate_events(all_events)
         removed_count = len(all_events) - len(unique_events)
         if removed_count > 0:
             print(f"去重: 移除了 {removed_count} 个重复事件")
-        
+
         # 重新分配事件ID
         for i, event in enumerate(unique_events):
             event.event_id = f"{chunk.chunk_id}-event-{i:04d}"
-        
+
         print(f"最终提取: {len(unique_events)} 个唯一事件")
         return unique_events
 
-    def _extract_initial_events(self, chunk: Chunk) -> List[TimeEvent]:
+    def _extract_initial_events(
+        self,
+        chunk: Chunk,
+        prior_events: Optional[List[TimeEvent]] = None,
+    ) -> List[TimeEvent]:
         """执行初始事件抽取"""
-        user_prompt = EXTRACTION_USER_PROMPT.format(
-            doc_title=chunk.doc_title,
-            content=chunk.content,
-        )
-        
+        prior_events = prior_events or []
+
+        # 根据是否有前置事件选择提示词模板
+        if prior_events:
+            user_prompt = EXTRACTION_USER_PROMPT_WITH_CONTEXT.format(
+                doc_title=chunk.doc_title,
+                content=chunk.content,
+                prior_events=self._format_prior_events(prior_events),
+            )
+        else:
+            user_prompt = EXTRACTION_USER_PROMPT.format(
+                doc_title=chunk.doc_title,
+                content=chunk.content,
+            )
+
         messages = [
             {"role": "system", "content": EXTRACTION_SYSTEM_PROMPT},
             {"role": "user", "content": user_prompt},
         ]
-        
+
         return self._call_api_and_parse_events(messages, chunk)
 
-    def _extract_review_events(self, chunk: Chunk, existing_events: List[TimeEvent], round_num: int) -> List[TimeEvent]:
+    def _extract_review_events(
+        self,
+        chunk: Chunk,
+        existing_events: List[TimeEvent],
+        round_num: int,
+        prior_events: Optional[List[TimeEvent]] = None,
+    ) -> List[TimeEvent]:
         """执行审查轮次的事件抽取"""
         existing_events_str = self._format_existing_events(existing_events)
-        
-        user_prompt = REVIEW_USER_PROMPT.format(
-            doc_title=chunk.doc_title,
-            content=chunk.content,
-            existing_events=existing_events_str,
-        )
-        
+        prior_events = prior_events or []
+
+        # 根据是否有前置事件选择提示词模板
+        if prior_events:
+            user_prompt = REVIEW_USER_PROMPT_WITH_CONTEXT.format(
+                doc_title=chunk.doc_title,
+                content=chunk.content,
+                existing_events=existing_events_str,
+                prior_events=self._format_prior_events(prior_events),
+            )
+        else:
+            user_prompt = REVIEW_USER_PROMPT.format(
+                doc_title=chunk.doc_title,
+                content=chunk.content,
+                existing_events=existing_events_str,
+            )
+
         messages = [
             {"role": "system", "content": REVIEW_SYSTEM_PROMPT},
             {"role": "user", "content": user_prompt},
         ]
-        
+
         # 使用稍高的温度参数进行审查
         original_temp = self.config.temperature
         self.config.temperature = self.config.review_temperature
-        
+
         try:
             events = self._call_api_and_parse_events(messages, chunk)
             return events
@@ -493,24 +642,37 @@ class EventExtractor:
     ) -> List[TimeEvent]:
         """
         从多个分块中抽取时间事件
-        
+
         Args:
             chunks: 分块列表
             progress_callback: 进度回调函数 (current, total)
-            
+
         Returns:
             所有时间事件列表
         """
         all_events = []
         total = len(chunks)
-        
+
+        # 存储每个分块的已抽取事件 {chunk_index: events}
+        extracted_events_by_chunk: Dict[int, List[TimeEvent]] = {}
+
         for i, chunk in enumerate(chunks):
-            events = self.extract_from_chunk(chunk)
+            # 获取前置事件上下文
+            prior_events = self._get_prior_events(i, extracted_events_by_chunk)
+
+            if prior_events:
+                print(f"Chunk {i}: 使用 {len(prior_events)} 个前置事件作为上下文")
+
+            # 抽取当前分块的事件
+            events = self.extract_from_chunk(chunk, prior_events)
+
+            # 存储当前分块的事件
+            extracted_events_by_chunk[i] = events
             all_events.extend(events)
-            
+
             if progress_callback:
                 progress_callback(i + 1, total)
-        
+
         return all_events
     
     def extract_from_document(
@@ -520,26 +682,23 @@ class EventExtractor:
     ) -> Dict[str, Any]:
         """
         从文档的所有分块中抽取时间事件，并返回结构化结果
-        
+
         Args:
             chunks: 该文档的所有分块
             doc_id: 文档ID
-            
+
         Returns:
             包含文档信息和事件的字典
         """
         # 过滤出属于该文档的分块
         doc_chunks = [c for c in chunks if c.doc_id == doc_id]
-        
+
         if not doc_chunks:
             return {"doc_id": doc_id, "chunks": [], "events": []}
-        
-        # 抽取事件
-        all_events = []
-        for chunk in doc_chunks:
-            events = self.extract_from_chunk(chunk)
-            all_events.extend(events)
-        
+
+        # 抽取事件（使用 extract_from_chunks 来支持前置事件上下文）
+        all_events = self.extract_from_chunks(doc_chunks)
+
         return {
             "doc_id": doc_id,
             "doc_title": doc_chunks[0].doc_title,

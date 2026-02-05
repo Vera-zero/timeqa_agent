@@ -23,6 +23,13 @@ class ChunkStrategy(str, Enum):
     SENTENCE = "sentence"      # 按句子分块
 
 
+class PriorEventsContextMode(str, Enum):
+    """前置已抽取事件上下文模式"""
+    NONE = "none"                    # 不使用前置事件上下文
+    FULL = "full"                    # 全量模式：所有前置分块的事件
+    SLIDING_WINDOW = "sliding_window"  # 滑动窗口：第一个分块 + 当前分块前N个分块的事件
+
+
 @dataclass
 class ChunkConfig:
     """分块配置"""
@@ -64,23 +71,32 @@ class ExtractorConfig:
     temperature: float = 0.1
     max_retries: int = 3
     timeout: int = 180
-    
+
     # 抽取配置
     batch_size: int = 1            # 每次处理的分块数（目前只支持1）
     include_implicit_time: bool = True  # 是否包含隐式时间引用
-    
+
     # 多轮抽取配置
     enable_multi_round: bool = True    # 是否启用多轮抽取
     max_rounds: int = 2               # 最大抽取轮数
     review_temperature: float = 0.0   # 审查轮次的温度参数
 
+    # 前置已抽取事件上下文配置
+    prior_events_context_mode: PriorEventsContextMode = PriorEventsContextMode.NONE  # 上下文模式
+    prior_events_window_size: int = 3  # 滑动窗口大小（仅 SLIDING_WINDOW 模式有效）
+
     def to_dict(self) -> Dict[str, Any]:
         """转换为字典"""
-        return asdict(self)
-    
+        d = asdict(self)
+        d["prior_events_context_mode"] = self.prior_events_context_mode.value
+        return d
+
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "ExtractorConfig":
         """从字典创建"""
+        if "prior_events_context_mode" in data:
+            data = data.copy()
+            data["prior_events_context_mode"] = PriorEventsContextMode(data["prior_events_context_mode"])
         return cls(**data)
 
 

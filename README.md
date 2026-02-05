@@ -425,15 +425,39 @@ print(queries.event_queries)
     "max_retries": 3,                   // 最大重试次数
     "timeout": 180,                     // 请求超时（秒）。复杂文档建议 180-300
     "batch_size": 1,                    // 批处理大小。并发抽取数量
-    "include_implicit_time": true       // 是否抽取隐式时间（如"去年"、"上个月"）
+    "include_implicit_time": true,      // 是否抽取隐式时间（如"去年"、"上个月"）
+    "enable_multi_round": true,         // 是否启用多轮抽取
+    "max_rounds": 2,                    // 最大抽取轮数
+    "review_temperature": 0.0,          // 审查轮次的温度参数
+    "prior_events_context_mode": "none", // 前置事件上下文模式: none, full, sliding_window
+    "prior_events_window_size": 3       // 滑动窗口大小（仅 sliding_window 模式有效）
   }
 }
 ```
+
+**前置事件上下文说明**：
+
+前置事件上下文功能允许在抽取当前分块时，将之前分块中已抽取的事件作为上下文信息传递给 LLM。这有助于解析相对时间表达式（如"8岁时"、"两年后"）。
+
+| 模式 | 说明 | 适用场景 |
+|------|------|----------|
+| `none` | 不使用前置事件上下文（默认） | 分块间时间信息独立 |
+| `full` | 全量模式：所有前置分块的事件 | 文档较短或事件不多时 |
+| `sliding_window` | 第一个分块 + 当前分块前 N 个分块的事件 | 长文档，控制上下文长度 |
+
+**滑动窗口模式示例**（window_size=3）：
+- 分块 0：无前置事件
+- 分块 1：分块 0 的事件
+- 分块 2：分块 0 + 分块 1 的事件
+- 分块 3：分块 0 + 分块 1 + 分块 2 的事件
+- 分块 4：分块 0 + 分块 1 + 分块 2 + 分块 3 的事件
+- 分块 5：分块 0 + 分块 2 + 分块 3 + 分块 4 的事件（始终保留分块 0）
 
 **建议**：
 - temperature 保持低值（0.1-0.2）确保抽取结果稳定
 - 长文档增加 timeout 避免超时
 - include_implicit_time 开启可捕获更多时间信息，但可能增加噪音
+- 传记类文档建议使用 `sliding_window` 模式，以便利用出生日期等关键时间锚点
 
 ### 实体消歧配置 (disambiguator)
 

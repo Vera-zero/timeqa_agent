@@ -19,7 +19,9 @@
     "include_implicit_time": true,
     "enable_multi_round": true,
     "max_rounds": 2,
-    "review_temperature": 0.0
+    "review_temperature": 0.0,
+    "prior_events_context_mode": "full",
+    "prior_events_window_size": 3
   },
   "disambiguator": {
     "embed_model": "deepseek-embed",
