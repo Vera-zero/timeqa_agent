@@ -101,6 +101,21 @@ class ExtractorConfig:
 
 
 @dataclass
+class EventFilterConfig:
+    """事件过滤配置"""
+    enabled: bool = True  # 是否启用事件过滤
+
+    def to_dict(self) -> Dict[str, Any]:
+        """转换为字典"""
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "EventFilterConfig":
+        """从字典创建"""
+        return cls(**data)
+
+
+@dataclass
 class DisambiguatorConfig:
     """实体消歧配置"""
     # Embedding API 配置
@@ -349,6 +364,7 @@ class TimeQAConfig:
     """TimeQA 完整配置"""
     chunk: ChunkConfig = field(default_factory=ChunkConfig)
     extractor: ExtractorConfig = field(default_factory=ExtractorConfig)
+    event_filter: EventFilterConfig = field(default_factory=EventFilterConfig)
     disambiguator: DisambiguatorConfig = field(default_factory=DisambiguatorConfig)
     timeline: TimelineConfig = field(default_factory=TimelineConfig)
     graph_store: GraphStoreConfig = field(default_factory=GraphStoreConfig)
@@ -366,6 +382,7 @@ class TimeQAConfig:
         return {
             "chunk": self.chunk.to_dict(),
             "extractor": self.extractor.to_dict(),
+            "event_filter": self.event_filter.to_dict(),
             "disambiguator": self.disambiguator.to_dict(),
             "timeline": self.timeline.to_dict(),
             "graph_store": self.graph_store.to_dict(),
@@ -383,6 +400,7 @@ class TimeQAConfig:
         return cls(
             chunk=ChunkConfig.from_dict(data.get("chunk", {})),
             extractor=ExtractorConfig.from_dict(data.get("extractor", {})),
+            event_filter=EventFilterConfig.from_dict(data.get("event_filter", {})),
             disambiguator=DisambiguatorConfig.from_dict(data.get("disambiguator", {})),
             timeline=TimelineConfig.from_dict(data.get("timeline", {})),
             graph_store=GraphStoreConfig.from_dict(data.get("graph_store", {})),

@@ -24,6 +24,7 @@ from dataclasses import dataclass
 from .config import TimeQAConfig, load_config
 from .chunker import DocumentChunker, Chunk
 from .event_extractor import EventExtractor, TimeEvent
+from .event_filter import EventFilter
 from .entity_disambiguator import EntityDisambiguator, EntityCluster
 from .timeline_extractor import TimelineExtractor, TimelineExtractionResult
 from .graph_store import TimelineGraphStore
@@ -33,14 +34,16 @@ class Stage(IntEnum):
     """流水线阶段"""
     CHUNK = 1
     EVENT = 2
-    DISAMBIGUATE = 3
-    TIMELINE = 4
-    GRAPH = 5
+    FILTER = 3
+    DISAMBIGUATE = 4
+    TIMELINE = 5
+    GRAPH = 6
 
 
 STAGE_NAMES = {
     Stage.CHUNK: "chunk",
     Stage.EVENT: "event",
+    Stage.FILTER: "event_filter",
     Stage.DISAMBIGUATE: "disambiguate",
     Stage.TIMELINE: "timeline",
     Stage.GRAPH: "graph",
@@ -93,6 +96,7 @@ class ExtractionPipeline:
         # 懒加载各组件
         self._chunker: Optional[DocumentChunker] = None
         self._event_extractor: Optional[EventExtractor] = None
+        self._event_filter: Optional[EventFilter] = None
         self._disambiguator: Optional[EntityDisambiguator] = None
         self._timeline_extractor: Optional[TimelineExtractor] = None
         self._graph_store: Optional[TimelineGraphStore] = None
@@ -107,10 +111,16 @@ class ExtractionPipeline:
     def event_extractor(self) -> EventExtractor:
         if self._event_extractor is None:
             self._event_extractor = EventExtractor(
-                self.timeqa_config.extractor, 
+                self.timeqa_config.extractor,
                 token=self.token
             )
         return self._event_extractor
+
+    @property
+    def event_filter(self) -> EventFilter:
+        if self._event_filter is None:
+            self._event_filter = EventFilter(self.timeqa_config.event_filter)
+        return self._event_filter
     
     @property
     def disambiguator(self) -> EntityDisambiguator:
@@ -252,21 +262,65 @@ class ExtractionPipeline:
         self._save_json(output_path, events_data)
         
         return events_data
-    
+
+    def run_filter_stage(self, events_data: Optional[List[Dict]] = None) -> List[Dict]:
+        """
+        阶段3: 事件过滤
+
+        输入: 事件列表
+        输出: 过滤后的事件列表
+        """
+        print("\n" + "="*50)
+        print("阶段 3: 事件过滤")
+        print("="*50)
+
+        # 加载或使用传入的事件数据
+        if events_data is None:
+            input_path = self.pipeline_config.stage_output_path(Stage.EVENT)
+            print(f"加载事件数据: {input_path}")
+            events_data = self._load_json(input_path)
+
+        # 转换为 TimeEvent 对象
+        events = [TimeEvent.from_dict(e) for e in events_data]
+        print(f"共 {len(events)} 个事件待过滤")
+
+        if not self.timeqa_config.event_filter.enabled:
+            print("事件过滤已禁用，跳过过滤")
+            # 即使禁用也保存一份，保证后续阶段读取一致
+            output_path = self.pipeline_config.stage_output_path(Stage.FILTER)
+            self._save_json(output_path, events_data)
+            return events_data
+
+        # 过滤
+        filtered_events = self.event_filter.filter_events(events)
+
+        # 保存
+        output_path = self.pipeline_config.stage_output_path(Stage.FILTER)
+        filtered_data = [e.to_dict() for e in filtered_events]
+        self._save_json(output_path, filtered_data)
+
+        return filtered_data
+
     def run_disambiguate_stage(self, events_data: Optional[List[Dict]] = None) -> Dict[str, Any]:
         """
-        阶段3: 实体消歧
-        
+        阶段4: 实体消歧
+
         输入: 事件列表
         输出: 实体聚类结果
         """
         print("\n" + "="*50)
-        print("阶段 3: 实体消歧")
+        print("阶段 4: 实体消歧")
         print("="*50)
-        
+
         # 加载或使用传入的事件数据
         if events_data is None:
-            input_path = self.pipeline_config.stage_output_path(Stage.EVENT)
+            # 优先从事件过滤阶段加载，否则从事件抽取阶段加载
+            filter_path = self.pipeline_config.stage_output_path(Stage.FILTER)
+            event_path = self.pipeline_config.stage_output_path(Stage.EVENT)
+            if os.path.exists(filter_path):
+                input_path = filter_path
+            else:
+                input_path = event_path
             print(f"加载事件数据: {input_path}")
             events_data = self._load_json(input_path)
         
@@ -296,44 +350,49 @@ class ExtractionPipeline:
         disambiguate_data: Optional[Dict] = None,
     ) -> Dict[str, Any]:
         """
-        阶段4: 时间线抽取
-        
+        阶段5: 时间线抽取
+
         输入: 事件列表 + 实体聚类
         输出: 时间线结果
         """
         print("\n" + "="*50)
-        print("阶段 4: 时间线抽取")
+        print("阶段 5: 时间线抽取")
         print("="*50)
         
         # 加载事件数据
         if events_data is None:
-            input_path = self.pipeline_config.stage_output_path(Stage.EVENT)
+            filter_path = self.pipeline_config.stage_output_path(Stage.FILTER)
+            event_path = self.pipeline_config.stage_output_path(Stage.EVENT)
+            if os.path.exists(filter_path):
+                input_path = filter_path
+            else:
+                input_path = event_path
             print(f"加载事件数据: {input_path}")
             events_data = self._load_json(input_path)
-        
+
         # 加载消歧数据（用于获取实体列表）
         if disambiguate_data is None:
             input_path = self.pipeline_config.stage_output_path(Stage.DISAMBIGUATE)
             print(f"加载消歧数据: {input_path}")
             disambiguate_data = self._load_json(input_path)
-        
+
         # 转换为 TimeEvent 对象
         events = [TimeEvent.from_dict(e) for e in events_data]
-        
+
         # 获取所有实体名称
         clusters = disambiguate_data.get("clusters", [])
         entity_names = [c["canonical_name"] for c in clusters]
         print(f"共 {len(entity_names)} 个实体待处理")
-        
+
         # 抽取时间线
         timeline_results = self.timeline_extractor.extract_timelines(
-            events, 
+            events,
             target_entities=entity_names
         )
-        
+
         total_timelines = sum(len(r.timelines) for r in timeline_results.values())
         print(f"\n共生成 {total_timelines} 条时间线")
-        
+
         # 保存
         output_path = self.pipeline_config.stage_output_path(Stage.TIMELINE)
         result = {
@@ -342,7 +401,7 @@ class ExtractionPipeline:
             "results": {k: v.to_dict() for k, v in timeline_results.items()},
         }
         self._save_json(output_path, result)
-        
+
         return result
     
     def run_graph_stage(
@@ -352,18 +411,23 @@ class ExtractionPipeline:
         timeline_data: Optional[Dict] = None,
     ) -> Dict[str, Any]:
         """
-        阶段5: 图存储
-        
+        阶段6: 图存储
+
         输入: 事件 + 实体聚类 + 时间线
         输出: 知识图谱
         """
         print("\n" + "="*50)
-        print("阶段 5: 图存储")
+        print("阶段 6: 图存储")
         print("="*50)
         
         # 加载数据
         if events_data is None:
-            input_path = self.pipeline_config.stage_output_path(Stage.EVENT)
+            filter_path = self.pipeline_config.stage_output_path(Stage.FILTER)
+            event_path = self.pipeline_config.stage_output_path(Stage.EVENT)
+            if os.path.exists(filter_path):
+                input_path = filter_path
+            else:
+                input_path = event_path
             print(f"加载事件数据: {input_path}")
             events_data = self._load_json(input_path)
         
@@ -437,11 +501,15 @@ class ExtractionPipeline:
             if stage == Stage.CHUNK:
                 chunks_data = self.run_chunk_stage()
                 results["chunk"] = {"num_chunks": len(chunks_data)}
-                
+
             elif stage == Stage.EVENT:
                 events_data = self.run_event_stage(chunks_data)
                 results["event"] = {"num_events": len(events_data)}
-                
+
+            elif stage == Stage.FILTER:
+                events_data = self.run_filter_stage(events_data)
+                results["event_filter"] = {"num_events": len(events_data)}
+
             elif stage == Stage.DISAMBIGUATE:
                 disambiguate_data = self.run_disambiguate_stage(events_data)
                 results["disambiguate"] = {"num_clusters": disambiguate_data["num_clusters"]}
@@ -473,15 +541,18 @@ def parse_args() -> argparse.Namespace:
 示例:
   # 单文档测试（验证链路）
   python -m timeqa_agent.pipeline --split test --mode single --doc-index 0
-  
+
   # 全量处理 test 集
   python -m timeqa_agent.pipeline --split test --mode full
-  
+
   # 从事件抽取阶段开始（使用已有的分块结果）
   python -m timeqa_agent.pipeline --split test --start event
-  
+
   # 只执行分块和事件抽取
   python -m timeqa_agent.pipeline --split test --start chunk --end event
+
+  # 从事件过滤阶段开始（使用已有的事件抽取结果）
+  python -m timeqa_agent.pipeline --split test --start event_filter
         """
     )
     

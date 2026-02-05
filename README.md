@@ -32,6 +32,7 @@ timeqa_agent/
 │   ├── config.py              # 配置模块
 │   ├── chunker.py             # 文档分块器
 │   ├── event_extractor.py     # 时间事件抽取器
+│   ├── event_filter.py        # 事件过滤器（去除 chunk 重叠产生的重复事件）
 │   ├── entity_disambiguator.py # 实体消歧器
 │   ├── timeline_extractor.py  # 时间线抽取器
 │   ├── graph_store.py         # 知识图谱存储
@@ -54,9 +55,10 @@ timeqa_agent/
 |------|------|------|------|
 | 1 | chunk | 语料库文档 | 文档分块 |
 | 2 | event | 分块 | 时间事件 |
-| 3 | disambiguate | 事件 | 实体聚类 |
-| 4 | timeline | 事件+实体 | 时间线 |
-| 5 | graph | 全部 | 知识图谱 |
+| 3 | event_filter | 事件 | 过滤后的事件（去重 + 保留最细粒度） |
+| 4 | disambiguate | 过滤后的事件 | 实体聚类 |
+| 5 | timeline | 事件+实体 | 时间线 |
+| 6 | graph | 全部 | 知识图谱 |
 
 ## 命令行使用
 
@@ -84,6 +86,9 @@ python -m timeqa_agent.pipeline --split test --start event
 
 # 只执行分块和事件抽取
 python -m timeqa_agent.pipeline --split test --start chunk --end event
+
+# 从事件过滤阶段开始（使用已有的事件抽取结果）
+python -m timeqa_agent.pipeline --split test --start event_filter
 
 # 只执行时间线抽取
 python -m timeqa_agent.pipeline --split test --start timeline --end timeline
@@ -307,6 +312,7 @@ data/timeqa/
 │   ├── test.json           # 全量模式
 │   └── test_doc0.json      # 单文档模式
 ├── event/
+├── event_filter/
 ├── disambiguate/
 ├── timeline/
 └── graph/
@@ -318,6 +324,7 @@ data/timeqa/
 from timeqa_agent import (
     DocumentChunker,
     EventExtractor,
+    EventFilter,
     EntityDisambiguator,
     TimelineExtractor,
     TimelineGraphStore,
@@ -458,6 +465,34 @@ print(queries.event_queries)
 - 长文档增加 timeout 避免超时
 - include_implicit_time 开启可捕获更多时间信息，但可能增加噪音
 - 传记类文档建议使用 `sliding_window` 模式，以便利用出生日期等关键时间锚点
+
+### 事件过滤配置 (event_filter)
+
+```json
+{
+  "event_filter": {
+    "enabled": true                         // 是否启用事件过滤
+  }
+}
+```
+
+**功能说明**：
+
+事件过滤阶段用于去除 chunk 重叠导致的重复事件。由于分块时存在 overlap，同一个事件可能被多个 chunk 分别抽取。过滤器会：
+
+1. **去除完全重复的事件**：event_description 和时间字段完全一致的事件仅保留一个
+2. **保留最细时间粒度**：对于描述相同但时间粒度不同的事件（如 "2008" vs "2008-07"），仅保留粒度最细的版本
+3. **合并 chunk 引用**：被合并的事件的所有来源 chunk ID 直接写入 `chunk_id` 字段（逗号分隔，如 `"doc-00000-chunk-0000,doc-00000-chunk-0001"`）
+
+**独立使用**：
+
+```bash
+# 过滤单文档事件
+python -m timeqa_agent.event_filter -i data/timeqa/event/test_doc0.json -o data/timeqa/event_filter/test_doc0.json
+
+# 使用配置文件
+python -m timeqa_agent.event_filter -i data/timeqa/event/test.json -o data/timeqa/event_filter/test.json --config configs/timeqa_config.json
+```
 
 ### 实体消歧配置 (disambiguator)
 

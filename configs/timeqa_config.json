@@ -23,6 +23,9 @@
     "prior_events_context_mode": "full",
     "prior_events_window_size": 3
   },
+  "event_filter": {
+    "enabled": true
+  },
   "disambiguator": {
     "embed_model": "deepseek-embed",
     "embed_base_url": "https://api.deepseek.com/v1",
