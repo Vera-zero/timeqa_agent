@@ -680,7 +680,7 @@ class SemanticRetriever(BaseRetriever):
             entity_name = data.get("entity_canonical_name", "")
             
             # 拼接文本用于嵌入
-            text = " ".join([timeline_name, description, entity_name])
+            text = " ".join([entity_name,timeline_name])
             
             event_ids_str = data.get("event_ids", "[]")
             event_ids = json.loads(event_ids_str) if event_ids_str else []
