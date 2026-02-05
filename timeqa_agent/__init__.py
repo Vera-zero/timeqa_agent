@@ -17,6 +17,7 @@ from .config import (
     TimelineConfig,
     GraphStoreConfig,
     RetrieverConfig,
+    QueryParserConfig,
     FusionMode,
     VectorIndexType,
     VectorMetric,
@@ -31,6 +32,14 @@ from .entity_disambiguator import EntityCluster, EntityDisambiguator
 from .timeline_extractor import Timeline, StandaloneEvent, TimelineExtractionResult, TimelineExtractor
 from .graph_store import TimelineGraphStore
 from .pipeline import ExtractionPipeline, PipelineConfig, Stage, STAGE_NAMES
+from .query_parser import (
+    TimeConstraintType,
+    TimeConstraint,
+    QueryParseResult,
+    RetrievalQueries,
+    QueryParserOutput,
+    QueryParser,
+)
 from .retrievers import (
     RetrievalMode,
     RetrievalResult,
@@ -65,6 +74,7 @@ __all__ = [
     "TimelineConfig",
     "GraphStoreConfig",
     "RetrieverConfig",
+    "QueryParserConfig",
     "FusionMode",
     "VectorIndexType",
     "VectorMetric",
@@ -95,6 +105,13 @@ __all__ = [
     "PipelineConfig",
     "Stage",
     "STAGE_NAMES",
+    # Query Parser
+    "TimeConstraintType",
+    "TimeConstraint",
+    "QueryParseResult",
+    "RetrievalQueries",
+    "QueryParserOutput",
+    "QueryParser",
     # Retrievers
     "RetrievalMode",
     "RetrievalResult",

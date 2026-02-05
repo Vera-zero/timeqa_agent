@@ -120,13 +120,36 @@ class TimelineConfig:
     temperature: float = 0.1
     max_retries: int = 3
     timeout: int = 180
-    
+
     def to_dict(self) -> Dict[str, Any]:
         """转换为字典"""
         return asdict(self)
-    
+
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "TimelineConfig":
+        """从字典创建"""
+        return cls(**data)
+
+
+@dataclass
+class QueryParserConfig:
+    """查询解析器配置"""
+    # 是否启用查询解析器
+    enabled: bool = True
+
+    # API 配置
+    model: str = "deepseek-chat"
+    base_url: str = "https://api.deepseek.com/chat/completions"
+    temperature: float = 0  # 默认温度为0，保证输出稳定
+    max_retries: int = 3
+    timeout: int = 180
+
+    def to_dict(self) -> Dict[str, Any]:
+        """转换为字典"""
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "QueryParserConfig":
         """从字典创建"""
         return cls(**data)
 
@@ -315,12 +338,13 @@ class TimeQAConfig:
     graph_store: GraphStoreConfig = field(default_factory=GraphStoreConfig)
     retriever: RetrieverConfig = field(default_factory=RetrieverConfig)
     voting: VotingConfig = field(default_factory=VotingConfig)
-    
+    query_parser: QueryParserConfig = field(default_factory=QueryParserConfig)
+
     # 路径配置
     data_dir: str = "data/timeqa"
     corpus_dir: str = "data/timeqa/corpus"
     output_dir: str = "data/timeqa/processed"
-    
+
     def to_dict(self) -> Dict[str, Any]:
         """转换为字典"""
         return {
@@ -331,11 +355,12 @@ class TimeQAConfig:
             "graph_store": self.graph_store.to_dict(),
             "retriever": self.retriever.to_dict(),
             "voting": self.voting.to_dict(),
+            "query_parser": self.query_parser.to_dict(),
             "data_dir": self.data_dir,
             "corpus_dir": self.corpus_dir,
             "output_dir": self.output_dir,
         }
-    
+
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "TimeQAConfig":
         """从字典创建"""
@@ -347,6 +372,7 @@ class TimeQAConfig:
             graph_store=GraphStoreConfig.from_dict(data.get("graph_store", {})),
             retriever=RetrieverConfig.from_dict(data.get("retriever", {})),
             voting=VotingConfig.from_dict(data.get("voting", {})),
+            query_parser=QueryParserConfig.from_dict(data.get("query_parser", {})),
             data_dir=data.get("data_dir", "data/timeqa"),
             corpus_dir=data.get("corpus_dir", "data/timeqa/corpus"),
             output_dir=data.get("output_dir", "data/timeqa/processed"),

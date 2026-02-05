@@ -37,6 +37,8 @@ timeqa_agent/
 │   ├── graph_store.py         # 知识图谱存储
 │   ├── graph_store_cli.py     # 图存储命令行工具
 │   ├── retriever_cli.py       # 检索器命令行工具
+│   ├── query_parser.py        # 查询解析器
+│   ├── query_parser_cli.py    # 查询解析器命令行工具
 │   └── pipeline.py            # 抽取流水线
 ├── configs/
 │   └── timeqa_config.json     # 默认配置文件
@@ -232,6 +234,69 @@ python -m timeqa_agent.retriever_cli -g data/timeqa/graph/test.json search "John
 | help | 显示帮助 |
 | quit/exit | 退出 |
 
+### 查询解析器
+
+查询解析器用于将用户问题分解为主干部分和时间约束部分，并生成针对实体、事件、时间线的检索语句。
+
+```bash
+# 交互式模式
+python -m timeqa_agent.query_parser_cli
+
+# 解析单个问题（完整流程：解析 + 生成检索语句）
+python -m timeqa_agent.query_parser_cli parse "Which team did Attaphol Buspakom play for in 2007?"
+
+# 仅解析问题（不生成检索语句）
+python -m timeqa_agent.query_parser_cli parse-only "Where did John work during the Beijing Olympics?"
+
+# 仅生成检索语句（直接输入问题主干）
+python -m timeqa_agent.query_parser_cli retrieval "Which team did Attaphol Buspakom play for?"
+
+# JSON 格式输出
+python -m timeqa_agent.query_parser_cli parse "When did he graduate?" --json
+
+# 使用指定配置文件
+python -m timeqa_agent.query_parser_cli -c configs/timeqa_config.json parse "Who was president in 1990?"
+```
+
+### 查询解析器命令行参数
+
+| 参数 | 简写 | 说明 | 默认值 |
+|------|------|------|--------|
+| --config | -c | 配置文件路径 | None |
+| --json | | JSON 格式输出 | false |
+| --verbose | -v | 详细输出 | false |
+
+### 查询解析器输出示例
+
+```
+原始问题: Which team did Attaphol Buspakom play for in 2007?
+问题主干: Which team did Attaphol Buspakom play for?
+
+时间约束:
+  类型: explicit
+  原始表达式: in 2007
+  标准化时间: 2007
+  描述: The year 2007
+
+检索语句:
+  实体查询: Attaphol Buspakom, a Thai professional football player
+  时间线查询: Attaphol Buspakom's football career, clubs and teams played for
+  事件查询 (5 条):
+    1. Attaphol Buspakom played for Buriram United F.C.
+    2. Attaphol Buspakom played for Chonburi F.C.
+    3. Attaphol Buspakom played for Thailand national football team
+    4. Attaphol Buspakom joined a football club
+    5. Attaphol Buspakom transferred to a new team
+```
+
+### 时间约束类型
+
+| 类型 | 说明 | 示例 |
+|------|------|------|
+| explicit | 显式时间约束 | "in 2007", "from 1990 to 2000", "before 1980" |
+| implicit | 隐式时间约束 | "during the Beijing Olympics", "when he was president" |
+| none | 无时间约束 | "Who is the CEO of Apple?" |
+
 ## 中间文件
 
 每个阶段的输出会保存到对应目录：
@@ -258,6 +323,7 @@ from timeqa_agent import (
     TimelineGraphStore,
     ExtractionPipeline,
     PipelineConfig,
+    QueryParser,
 )
 
 # 使用流水线
@@ -297,6 +363,26 @@ results = store.get_entities_by_name("Smith", fuzzy=True)
 
 # 时间范围查询
 events = store.get_events_in_time_range("1990", "2000")
+
+# 使用查询解析器
+parser = QueryParser()
+
+# 完整处理流程
+output = parser.process("Which team did Attaphol Buspakom play for in 2007?")
+print(output.parse_result.question_stem)  # "Which team did Attaphol Buspakom play for?"
+print(output.parse_result.time_constraint.constraint_type)  # "explicit"
+print(output.retrieval_queries.entity_query)  # "Attaphol Buspakom, a Thai professional football player"
+print(output.retrieval_queries.event_queries)  # ["Attaphol Buspakom played for...", ...]
+
+# 分步调用
+parse_result = parser.parse_question("Where did John work during the Olympics?")
+print(parse_result.question_stem)  # "Where did John work?"
+print(parse_result.time_constraint.constraint_type)  # "implicit"
+
+queries = parser.generate_retrieval_queries("Where did John work?")
+print(queries.entity_query)
+print(queries.timeline_query)
+print(queries.event_queries)
 ```
 
 ## 配置
@@ -397,6 +483,37 @@ events = store.get_events_in_time_range("1990", "2000")
 **建议**：
 - 生产环境可关闭 store_chunk_metadata 减少存储
 - store_original_sentence 建议保持开启，便于验证抽取结果
+
+### 查询解析器配置 (query_parser)
+
+```json
+{
+  "query_parser": {
+    "enabled": true,              // 是否启用查询解析器
+    "model": "deepseek-chat",     // LLM 模型名称
+    "base_url": "http://...",     // API 端点
+    "temperature": 0,             // 生成温度。默认为 0，保证输出稳定一致
+    "max_retries": 3,             // 最大重试次数
+    "timeout": 180                // 请求超时（秒）
+  }
+}
+```
+
+**参数说明**：
+| 参数 | 类型 | 默认值 | 说明 |
+|------|------|--------|------|
+| enabled | bool | true | 是否启用查询解析器。禁用时返回原始问题作为主干 |
+| temperature | float | 0 | 生成温度。建议保持为 0 确保输出稳定 |
+
+**功能说明**：
+查询解析器将用户问题分解为两个部分：
+1. **问题主干**：去除时间约束后的核心问题
+2. **时间约束**：显式（如 "in 2007"）或隐式（如 "during the Beijing Olympics"）
+
+然后基于问题主干生成三层检索语句：
+- **实体查询**：标准化名称 + 简短描述
+- **时间线查询**：时间线名称 + 描述 + 相关实体
+- **事件查询**：将问题转为多个陈述句（基于常识推断可能的答案）
 
 ### 检索器配置 (retriever)
 

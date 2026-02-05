@@ -1,7 +1,7 @@
 {
   "chunk": {
     "strategy": "sentence",
-    "chunk_size": 1500,
+    "chunk_size": 1200,
     "chunk_overlap": 100,
     "max_sentences": 10,
     "sentence_overlap": 2,
@@ -82,6 +82,14 @@
     "enable_event_layer": true,
     "vote_count_alpha": 0.25,
     "vote_count_beta": 0.75
+  },
+  "query_parser": {
+    "enabled": true,
+    "model": "deepseek-chat",
+    "base_url": "https://api.deepseek.com/chat/completions",
+    "temperature": 0,
+    "max_retries": 3,
+    "timeout": 180
   },
   "data_dir": "data/timeqa",
   "corpus_dir": "data/timeqa/corpus",
