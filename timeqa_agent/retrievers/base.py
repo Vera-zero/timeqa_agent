@@ -146,18 +146,18 @@ class TimelineResult(RetrievalResult):
 
 class BaseRetriever(ABC):
     """检索器基类"""
-    
+
     def __init__(self, graph_store, config: Optional[RetrieverConfig] = None):
         """
         初始化检索器
-        
+
         Args:
             graph_store: TimelineGraphStore 实例
             config: 检索器配置
         """
         self.graph_store = graph_store
         self.config = config or RetrieverConfig()
-    
+
     @abstractmethod
     def retrieve(
         self,
@@ -167,21 +167,21 @@ class BaseRetriever(ABC):
     ) -> List[RetrievalResult]:
         """
         执行检索
-        
+
         Args:
             query: 查询字符串
             top_k: 返回数量
             **kwargs: 其他参数
-            
+
         Returns:
             检索结果列表
         """
         pass
-    
+
     def _get_top_k(self, top_k: Optional[int]) -> int:
         """获取实际的 top_k 值"""
         return top_k if top_k is not None else self.config.top_k
-    
+
     def _filter_by_threshold(
         self,
         results: List[RetrievalResult],
@@ -190,7 +190,7 @@ class BaseRetriever(ABC):
         """按分数阈值过滤结果"""
         threshold = threshold if threshold is not None else self.config.score_threshold
         return [r for r in results if r.score >= threshold]
-    
+
     def _sort_by_score(
         self,
         results: List[RetrievalResult],
@@ -198,3 +198,70 @@ class BaseRetriever(ABC):
     ) -> List[RetrievalResult]:
         """按分数排序"""
         return sorted(results, key=lambda x: x.score, reverse=descending)
+
+
+# ========== 三层递进检索结果类 ==========
+
+
+@dataclass
+class HierarchicalEventResult(EventResult):
+    """三层递进检索的事件结果（包含溯源信息）"""
+
+    source_entity_names: List[str] = field(default_factory=list)
+    source_entity_scores: List[float] = field(default_factory=list)
+    source_timeline_id: Optional[str] = None
+    hierarchical_score: float = 0.0
+
+    def to_dict(self) -> Dict[str, Any]:
+        base = super().to_dict()
+        base.update({
+            "source_entity_names": self.source_entity_names,
+            "source_entity_scores": self.source_entity_scores,
+            "source_timeline_id": self.source_timeline_id,
+            "hierarchical_score": self.hierarchical_score,
+        })
+        return base
+
+
+@dataclass
+class HierarchicalTimelineResult(TimelineResult):
+    """三层递进检索的时间线结果（包含溯源信息）"""
+
+    source_entity_names: List[str] = field(default_factory=list)
+    source_entity_scores: List[float] = field(default_factory=list)
+    hierarchical_score: float = 0.0
+
+    def to_dict(self) -> Dict[str, Any]:
+        base = super().to_dict()
+        base.update({
+            "source_entity_names": self.source_entity_names,
+            "source_entity_scores": self.source_entity_scores,
+            "hierarchical_score": self.hierarchical_score,
+        })
+        return base
+
+
+@dataclass
+class HierarchicalRetrievalResults:
+    """三层递进检索完整结果"""
+
+    events: List[HierarchicalEventResult] = field(default_factory=list)
+    timelines: List[HierarchicalTimelineResult] = field(default_factory=list)
+
+    # 中间层结果（可选，用于调试）
+    layer1_entities: Optional[List[EntityResult]] = None
+    layer2_all_timelines: Optional[List[TimelineResult]] = None
+    layer2_all_events: Optional[List[EventResult]] = None
+
+    def to_dict(self) -> Dict[str, Any]:
+        result = {
+            "events": [e.to_dict() for e in self.events],
+            "timelines": [t.to_dict() for t in self.timelines],
+        }
+        if self.layer1_entities is not None:
+            result["layer1_entities"] = [e.to_dict() for e in self.layer1_entities]
+        if self.layer2_all_timelines is not None:
+            result["layer2_all_timelines"] = [t.to_dict() for t in self.layer2_all_timelines]
+        if self.layer2_all_events is not None:
+            result["layer2_all_events"] = [e.to_dict() for e in self.layer2_all_events]
+        return result

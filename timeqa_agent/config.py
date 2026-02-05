@@ -267,6 +267,42 @@ class VotingConfig:
         return cls(**data)
 
 
+@dataclass
+class HierarchicalConfig:
+    """三层递进检索配置
+
+    三层检索流程：
+    1. 第一层：检索 top-k1 实体
+    2. 第二层：收集这些实体关联的所有时间线和事件
+    3. 第三层：在收集的数据中检索 top-k2 时间线 + top-k3 事件
+    """
+
+    # 核心开关
+    enabled: bool = False                       # 是否启用三层递进检索
+
+    # 三层检索数量参数
+    k1_entities: int = 5                        # 第一层：检索实体数量
+    k2_timelines: int = 10                      # 第三层：从候选中检索时间线数量
+    k3_events: int = 20                         # 第三层：从候选中检索事件数量
+
+    # 分数阈值
+    entity_score_threshold: float = 0.0         # 第一层实体分数阈值
+    timeline_score_threshold: float = 0.0       # 第三层时间线分数阈值
+    event_score_threshold: float = 0.0          # 第三层事件分数阈值
+
+    # 是否返回中间层结果（用于调试）
+    include_intermediate_results: bool = False
+
+    def to_dict(self) -> Dict[str, Any]:
+        """转换为字典"""
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "HierarchicalConfig":
+        """从字典创建"""
+        return cls(**data)
+
+
 class VectorIndexType(str, Enum):
     """向量索引类型"""
     FLAT = "flat"      # 暴力搜索 (FAISS IndexFlat)
@@ -370,6 +406,7 @@ class TimeQAConfig:
     graph_store: GraphStoreConfig = field(default_factory=GraphStoreConfig)
     retriever: RetrieverConfig = field(default_factory=RetrieverConfig)
     voting: VotingConfig = field(default_factory=VotingConfig)
+    hierarchical: HierarchicalConfig = field(default_factory=HierarchicalConfig)
     query_parser: QueryParserConfig = field(default_factory=QueryParserConfig)
 
     # 路径配置
@@ -388,6 +425,7 @@ class TimeQAConfig:
             "graph_store": self.graph_store.to_dict(),
             "retriever": self.retriever.to_dict(),
             "voting": self.voting.to_dict(),
+            "hierarchical": self.hierarchical.to_dict(),
             "query_parser": self.query_parser.to_dict(),
             "data_dir": self.data_dir,
             "corpus_dir": self.corpus_dir,
@@ -406,6 +444,7 @@ class TimeQAConfig:
             graph_store=GraphStoreConfig.from_dict(data.get("graph_store", {})),
             retriever=RetrieverConfig.from_dict(data.get("retriever", {})),
             voting=VotingConfig.from_dict(data.get("voting", {})),
+            hierarchical=HierarchicalConfig.from_dict(data.get("hierarchical", {})),
             query_parser=QueryParserConfig.from_dict(data.get("query_parser", {})),
             data_dir=data.get("data_dir", "data/timeqa"),
             corpus_dir=data.get("corpus_dir", "data/timeqa/corpus"),

@@ -88,6 +88,16 @@
     "vote_count_alpha": 0.25,
     "vote_count_beta": 0.75
   },
+  "hierarchical": {
+    "enabled": true,
+    "k1_entities": 3,
+    "k2_timelines": 5,
+    "k3_events": 10,
+    "entity_score_threshold": 0.0,
+    "timeline_score_threshold": 0.0,
+    "event_score_threshold": 0.0,
+    "include_intermediate_results": true
+  },
   "query_parser": {
     "enabled": true,
     "model": "deepseek-chat",

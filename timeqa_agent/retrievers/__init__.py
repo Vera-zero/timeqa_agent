@@ -1,7 +1,7 @@
 """
 检索器模块
 
-提供关键词、语义、混合和多层投票检索能力
+提供关键词、语义、混合、多层投票和三层递进检索能力
 """
 
 from .base import (
@@ -11,6 +11,9 @@ from .base import (
     EventResult,
     TimelineResult,
     BaseRetriever,
+    HierarchicalEventResult,
+    HierarchicalTimelineResult,
+    HierarchicalRetrievalResults,
 )
 from .keyword_retriever import KeywordRetriever, TFIDFIndex
 from .semantic_retriever import SemanticRetriever, VectorIndex, FAISS_AVAILABLE
@@ -21,7 +24,8 @@ from .voting_retriever import (
     EventVote,
     create_voting_retriever,
 )
-from ..config import VotingConfig, VotingFusionMode
+from .hierarchical_retriever import HierarchicalRetriever
+from ..config import VotingConfig, VotingFusionMode, HierarchicalConfig
 
 __all__ = [
     # Base
@@ -47,4 +51,10 @@ __all__ = [
     "VotingEventResult",
     "EventVote",
     "create_voting_retriever",
+    # Hierarchical (三层递进检索)
+    "HierarchicalRetriever",
+    "HierarchicalConfig",
+    "HierarchicalEventResult",
+    "HierarchicalTimelineResult",
+    "HierarchicalRetrievalResults",
 ]

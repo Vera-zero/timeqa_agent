@@ -17,11 +17,15 @@ from .retrievers import (
     KeywordRetriever,
     SemanticRetriever,
     MultiLayerVotingRetriever,
+    HierarchicalRetriever,
     RetrievalResult,
     EntityResult,
     EventResult,
     TimelineResult,
     VotingEventResult,
+    HierarchicalEventResult,
+    HierarchicalTimelineResult,
+    HierarchicalRetrievalResults,
     RetrievalMode,
 )
 
@@ -119,6 +123,72 @@ def print_generic_result(result: RetrievalResult, verbose: bool = False):
     print(f"\n[{result.node_type}] {result.node_id}  (score: {result.score:.4f})")
     if verbose and result.metadata:
         print(f"  元数据: {result.metadata}")
+
+
+def print_hierarchical_event_result(result: HierarchicalEventResult, verbose: bool = False):
+    """打印三层递进检索的事件结果"""
+    print(f"\n{'-'*60}")
+    print(f"[事件] {result.event_id}  (score: {result.hierarchical_score:.4f})")
+    print(f"{'-'*60}")
+    print(f"  描述: {result.event_description}")
+    print(f"  时间类型: {result.time_type}")
+    if result.time_start or result.time_end:
+        time_str = f"{result.time_start} ~ {result.time_end}" if result.time_end else result.time_start
+        print(f"  时间: {time_str}")
+    if result.time_expression:
+        print(f"  时间表达: {result.time_expression}")
+    if result.entity_names:
+        print(f"  参与实体: {', '.join(result.entity_names)}")
+    if result.source_entity_names:
+        print(f"  来源实体: {', '.join(result.source_entity_names)}")
+    if verbose and result.original_sentence:
+        print(f"  原文: {result.original_sentence[:150]}...")
+
+
+def print_hierarchical_timeline_result(result: HierarchicalTimelineResult, verbose: bool = False):
+    """打印三层递进检索的时间线结果"""
+    print(f"\n{'#'*60}")
+    print(f"[时间线] {result.timeline_name}  (score: {result.hierarchical_score:.4f})")
+    print(f"{'#'*60}")
+    print(f"  ID: {result.timeline_id}")
+    if result.description:
+        print(f"  描述: {result.description}")
+    print(f"  所属实体: {result.entity_canonical_name}")
+    if result.time_span_start or result.time_span_end:
+        print(f"  时间跨度: {result.time_span_start} ~ {result.time_span_end}")
+    if result.source_entity_names:
+        print(f"  来源实体: {', '.join(result.source_entity_names)}")
+    if verbose:
+        print(f"  包含事件数: {len(result.event_ids)}")
+
+
+def print_hierarchical_results(results: HierarchicalRetrievalResults, query: str, verbose: bool = False):
+    """打印三层递进检索的完整结果"""
+    # 中间层结果
+    if results.layer1_entities is not None:
+        print(f"\n--- 第一层：检索到 {len(results.layer1_entities)} 个实体 ---")
+        for entity in results.layer1_entities:
+            print(f"  [{entity.canonical_name}] score={entity.score:.4f}")
+
+    if results.layer2_all_timelines is not None or results.layer2_all_events is not None:
+        tl_count = len(results.layer2_all_timelines) if results.layer2_all_timelines else 0
+        ev_count = len(results.layer2_all_events) if results.layer2_all_events else 0
+        print(f"\n--- 第二层：收集到 {tl_count} 条时间线, {ev_count} 个事件 ---")
+        for timeline in results.layer2_all_timelines:
+            print(f"  [{timeline.timeline_name}]")
+
+    # 最终结果
+    print(f"\n--- 第三层：筛选出 {len(results.timelines)} 条时间线, {len(results.events)} 个事件 ---")
+
+    if results.timelines:
+        print(f"\n--- 时间线 ({len(results.timelines)} 条) ---")
+        for tl in results.timelines:
+            print_hierarchical_timeline_result(tl, verbose)
+
+    if results.events:
+        print(f"\n--- 事件 ({len(results.events)} 个) ---")
+        for ev in results.events:
+            print_hierarchical_event_result(ev, verbose)
 
 
 def create_embed_fn(config) -> Optional[Callable]:
@@ -248,6 +318,15 @@ class RetrieverCLI:
             voting_config=self.config.voting,
             index_dir=actual_index_dir,
         )
+
+        # 三层递进检索器
+        self._hierarchical_retriever = HierarchicalRetriever(
+            self.store,
+            embed_fn=embed_fn,
+            retriever_config=self.config.retriever,
+            hierarchical_config=self.config.hierarchical,
+            index_dir=actual_index_dir,
+        )
         
         # 打印索引加载状态
         if not skip_index_load and has_cached_index:
@@ -325,6 +404,35 @@ class RetrieverCLI:
     ) -> dict:
         """执行投票检索并返回详细信息"""
         return self._voting_retriever.retrieve_with_details(query, top_k=top_k)
+
+    def cmd_hierarchical_search(
+        self,
+        query: str,
+        k1: Optional[int] = None,
+        k2: Optional[int] = None,
+        k3: Optional[int] = None,
+        include_intermediate: Optional[bool] = None,
+    ) -> HierarchicalRetrievalResults:
+        """执行三层递进检索
+
+        Args:
+            query: 查询字符串
+            k1: 第一层实体数量（None 时使用配置值）
+            k2: 第三层时间线数量（None 时使用配置值）
+            k3: 第三层事件数量（None 时使用配置值）
+            include_intermediate: 是否返回中间层结果（None 时使用配置值）
+        """
+        # 使用配置文件的默认值
+        if include_intermediate is None:
+            include_intermediate = self.config.hierarchical.include_intermediate_results
+
+        return self._hierarchical_retriever.retrieve(
+            query=query,
+            k1=k1,
+            k2=k2,
+            k3=k3,
+            include_intermediate=include_intermediate,
+        )
     
     def cmd_entity_search(
         self,
@@ -355,6 +463,11 @@ class RetrieverCLI:
         print(f"    - 实体层权重: {self.config.voting.entity_layer_weight}")
         print(f"    - 时间线层权重: {self.config.voting.timeline_layer_weight}")
         print(f"    - 事件层权重: {self.config.voting.event_layer_weight}")
+        print(f"\n三层递进检索配置:")
+        print(f"    - 启用: {self.config.hierarchical.enabled}")
+        print(f"    - k1 (实体): {self.config.hierarchical.k1_entities}")
+        print(f"    - k2 (时间线): {self.config.hierarchical.k2_timelines}")
+        print(f"    - k3 (事件): {self.config.hierarchical.k3_events}")
     
     def interactive(self):
         """交互式模式"""
@@ -367,9 +480,14 @@ class RetrieverCLI:
         print("  semantic <query>                 - 语义检索")
         print("  voting <query>                   - 多层投票检索")
         print("  voting-details <query>           - 投票检索（含详细信息）")
+        print("  hierarchical <query>             - 三层递进检索")
+        print("  hierarchical-details <query>     - 三层递进检索（含中间层信息）")
         print("  entity <name> <query>            - 实体上下文检索")
         print("  type <entity|event|timeline>    - 设置目标类型过滤")
         print("  topk <n>                         - 设置返回数量")
+        print("  k1 <n>                           - 设置三层递进检索实体数量")
+        print("  k2 <n>                           - 设置三层递进检索时间线数量")
+        print("  k3 <n>                           - 设置三层递进检索事件数量")
         print("  fusion <rrf|weighted_sum|max_score|interleave>  - 设置混合融合模式")
         print("  vfusion <rrf|weighted|vote_count|borda>  - 设置投票融合模式")
         print("  stats                            - 显示统计信息")
@@ -383,6 +501,9 @@ class RetrieverCLI:
         top_k = 10
         fusion_mode = None
         voting_fusion_mode = None
+        h_k1 = None
+        h_k2 = None
+        h_k3 = None
         
         while True:
             try:
@@ -429,6 +550,35 @@ class RetrieverCLI:
                         print(f"投票融合模式设置为: {voting_fusion_mode}")
                     else:
                         print("用法: vfusion <rrf|weighted|vote_count|borda>")
+                elif cmd == "k1":
+                    try:
+                        h_k1 = int(arg)
+                        print(f"三层递进检索 k1 (实体) 设置为: {h_k1}")
+                    except ValueError:
+                        print("用法: k1 <数字>")
+                elif cmd == "k2":
+                    try:
+                        h_k2 = int(arg)
+                        print(f"三层递进检索 k2 (时间线) 设置为: {h_k2}")
+                    except ValueError:
+                        print("用法: k2 <数字>")
+                elif cmd == "k3":
+                    try:
+                        h_k3 = int(arg)
+                        print(f"三层递进检索 k3 (事件) 设置为: {h_k3}")
+                    except ValueError:
+                        print("用法: k3 <数字>")
+                elif cmd == "hierarchical" and arg:
+                    results = self.cmd_hierarchical_search(
+                        arg, k1=h_k1, k2=h_k2, k3=h_k3
+                    )
+                    print_hierarchical_results(results, arg, self.verbose)
+                elif cmd == "hierarchical-details" and arg:
+                    results = self.cmd_hierarchical_search(
+                        arg, k1=h_k1, k2=h_k2, k3=h_k3,
+                        include_intermediate=True,
+                    )
+                    print_hierarchical_results(results, arg, self.verbose)
                 elif cmd == "voting" and arg:
                     results = self.cmd_search(
                         arg, mode="voting", top_k=top_k,
@@ -506,43 +656,52 @@ def main():
 示例:
   # 交互式模式
   python -m timeqa_agent.retriever_cli -g data/timeqa/graph/test.json
-  
+
   # 混合检索
   python -m timeqa_agent.retriever_cli -g data/timeqa/graph/test.json search "when did John join the company"
-  
+
   # 关键词检索
   python -m timeqa_agent.retriever_cli -g data/timeqa/graph/test.json keyword "John Smith"
-  
+
   # 语义检索
   python -m timeqa_agent.retriever_cli -g data/timeqa/graph/test.json semantic "career changes"
-  
+
   # 多层投票检索
   python -m timeqa_agent.retriever_cli -g data/timeqa/graph/test.json voting "when did John join"
-  
+
   # 投票检索（含详细信息）
   python -m timeqa_agent.retriever_cli -g data/timeqa/graph/test.json voting-details "career history"
-  
+
+  # 三层递进检索
+  python -m timeqa_agent.retriever_cli -g data/timeqa/graph/test.json hierarchical "when did John join"
+
+  # 三层递进检索（指定 k1/k2/k3）
+  python -m timeqa_agent.retriever_cli -g data/timeqa/graph/test.json hierarchical "career" --k1 3 --k2 5 --k3 10
+
+  # 三层递进检索（含中间层详情）
+  python -m timeqa_agent.retriever_cli -g data/timeqa/graph/test.json hierarchical-details "career history"
+
   # 只检索事件
   python -m timeqa_agent.retriever_cli -g data/timeqa/graph/test.json search "2020" -t event
-  
+
   # 只检索实体
   python -m timeqa_agent.retriever_cli -g data/timeqa/graph/test.json search "Smith" -t entity
-  
+
   # 带实体上下文的检索
   python -m timeqa_agent.retriever_cli -g data/timeqa/graph/test.json entity-search "John Smith" "when did he graduate"
-  
+
   # 设置返回数量
   python -m timeqa_agent.retriever_cli -g data/timeqa/graph/test.json search "event" -k 20
-  
+
   # 使用特定融合模式
   python -m timeqa_agent.retriever_cli -g data/timeqa/graph/test.json search "career" --fusion weighted_sum
-  
+
   # 投票检索使用特定融合模式
   python -m timeqa_agent.retriever_cli -g data/timeqa/graph/test.json voting "career" --vfusion borda
-  
+
   # JSON 输出
   python -m timeqa_agent.retriever_cli -g data/timeqa/graph/test.json search "John" --json
-  
+
   # 禁用语义检索（仅使用关键词）
   python -m timeqa_agent.retriever_cli -g data/timeqa/graph/test.json search "John" --no-semantic
 """
@@ -563,7 +722,7 @@ def main():
         "command",
         nargs="?",
         default="interactive",
-        help="命令: search, keyword, semantic, voting, voting-details, entity-search, stats, interactive"
+        help="命令: search, keyword, semantic, voting, voting-details, hierarchical, hierarchical-details, entity-search, stats, interactive"
     )
     
     parser.add_argument(
@@ -596,6 +755,27 @@ def main():
         "--vfusion",
         choices=["rrf", "weighted", "vote_count", "borda"],
         help="投票检索融合模式"
+    )
+
+    parser.add_argument(
+        "--k1",
+        type=int,
+        default=None,
+        help="三层递进检索：第一层实体数量（覆盖配置值）"
+    )
+
+    parser.add_argument(
+        "--k2",
+        type=int,
+        default=None,
+        help="三层递进检索：第三层时间线数量（覆盖配置值）"
+    )
+
+    parser.add_argument(
+        "--k3",
+        type=int,
+        default=None,
+        help="三层递进检索：第三层事件数量（覆盖配置值）"
     )
     
     parser.add_argument(
@@ -644,7 +824,7 @@ def main():
     # 处理重建索引命令
     if args.rebuild_index:
         cli.rebuild_indexes()
-        if args.command.lower() not in ("search", "semantic", "hybrid", "keyword", "voting", "voting-details", "entity-search"):
+        if args.command.lower() not in ("search", "semantic", "hybrid", "keyword", "voting", "voting-details", "entity-search", "hierarchical", "hierarchical-details"):
             return
     
     cmd = args.command.lower()
@@ -730,6 +910,25 @@ def main():
             print_json([r.to_dict() for r in results])
         else:
             cli._print_results(results, query)
+    elif cmd == "hierarchical" and cmd_args:
+        query = " ".join(cmd_args)
+        results = cli.cmd_hierarchical_search(
+            query, k1=args.k1, k2=args.k2, k3=args.k3
+        )
+        if args.json:
+            print_json(results.to_dict())
+        else:
+            print_hierarchical_results(results, query, cli.verbose)
+    elif cmd == "hierarchical-details" and cmd_args:
+        query = " ".join(cmd_args)
+        results = cli.cmd_hierarchical_search(
+            query, k1=args.k1, k2=args.k2, k3=args.k3,
+            include_intermediate=True,
+        )
+        if args.json:
+            print_json(results.to_dict())
+        else:
+            print_hierarchical_results(results, query, cli.verbose)
     else:
         parser.print_help()
 

@@ -40,7 +40,14 @@ timeqa_agent/
 │   ├── retriever_cli.py       # 检索器命令行工具
 │   ├── query_parser.py        # 查询解析器
 │   ├── query_parser_cli.py    # 查询解析器命令行工具
-│   └── pipeline.py            # 抽取流水线
+│   ├── pipeline.py            # 抽取流水线
+│   └── retrievers/
+│       ├── base.py                    # 检索器基类和数据结构
+│       ├── keyword_retriever.py       # 关键词检索器
+│       ├── semantic_retriever.py      # 语义检索器
+│       ├── hybrid_retriever.py        # 混合检索器
+│       ├── voting_retriever.py        # 多层投票检索器
+│       └── hierarchical_retriever.py  # 三层递进检索器
 ├── configs/
 │   └── timeqa_config.json     # 默认配置文件
 ├── data/timeqa/
@@ -180,6 +187,15 @@ python -m timeqa_agent.retriever_cli -g data/timeqa/graph/test.json keyword "Joh
 # 语义检索
 python -m timeqa_agent.retriever_cli -g data/timeqa/graph/test.json semantic "career changes"
 
+# 三层递进检索
+python -m timeqa_agent.retriever_cli -g data/timeqa/graph/test.json hierarchical "when did John join"
+
+# 三层递进检索（指定 k1/k2/k3）
+python -m timeqa_agent.retriever_cli -g data/timeqa/graph/test.json hierarchical "career" --k1 3 --k2 5 --k3 10
+
+# 三层递进检索（含中间层详情）
+python -m timeqa_agent.retriever_cli -g data/timeqa/graph/test.json hierarchical-details "career history"
+
 # 只检索事件
 python -m timeqa_agent.retriever_cli -g data/timeqa/graph/test.json search "2020" -t event
 
@@ -217,6 +233,9 @@ python -m timeqa_agent.retriever_cli -g data/timeqa/graph/test.json search "John
 | --type | -t | 目标类型: all/entity/event/timeline | all |
 | --top-k | -k | 返回结果数量 | 10 |
 | --fusion | | 融合模式: rrf/weighted_sum/max_score/interleave | rrf |
+| --k1 | | 三层递进检索：第一层实体数量 | 配置值 |
+| --k2 | | 三层递进检索：第三层时间线数量 | 配置值 |
+| --k3 | | 三层递进检索：第三层事件数量 | 配置值 |
 | --json | | JSON 格式输出 | false |
 | --verbose | -v | 详细输出 | false |
 | --no-semantic | | 禁用语义检索 | false |
@@ -230,9 +249,14 @@ python -m timeqa_agent.retriever_cli -g data/timeqa/graph/test.json search "John
 | search \<query\> | 混合检索 |
 | keyword \<query\> | 关键词检索 |
 | semantic \<query\> | 语义检索 |
+| hierarchical \<query\> | 三层递进检索 |
+| hierarchical-details \<query\> | 三层递进检索（含中间层信息） |
 | entity \<name\> \<query\> | 带实体上下文的检索 |
 | type \<entity\|event\|timeline\|all\> | 设置目标类型过滤 |
 | topk \<n\> | 设置返回数量 |
+| k1 \<n\> | 设置三层递进检索实体数量 |
+| k2 \<n\> | 设置三层递进检索时间线数量 |
+| k3 \<n\> | 设置三层递进检索事件数量 |
 | fusion \<mode\> | 设置融合模式 |
 | stats | 显示统计信息 |
 | verbose | 切换详细输出 |
@@ -645,6 +669,95 @@ python -m timeqa_agent.event_filter -i data/timeqa/event/test.json -o data/timeq
   "corpus_dir": "data/timeqa/corpus",  // 语料库目录
   "output_dir": "data/timeqa/processed" // 输出目录
 }
+```
+
+### 三层递进检索配置 (hierarchical)
+
+```json
+{
+  "hierarchical": {
+    "enabled": false,                     // 是否启用三层递进检索
+    "k1_entities": 5,                     // 第一层：检索实体数量
+    "k2_timelines": 10,                   // 第三层：筛选时间线数量
+    "k3_events": 20,                      // 第三层：筛选事件数量
+    "entity_score_threshold": 0.0,        // 第一层实体分数阈值
+    "timeline_score_threshold": 0.0,      // 第三层时间线分数阈值
+    "event_score_threshold": 0.0,         // 第三层事件分数阈值
+    "include_intermediate_results": false  // 是否返回中间层结果（调试用）
+  }
+}
+```
+
+**检索流程**：
+
+```
+查询 Query
+  │
+  ├── 第一层：混合检索实体 → Top-K1 实体
+  │
+  ├── 第二层：通过图存储收集 K1 个实体的所有时间线和事件
+  │
+  └── 第三层：在候选时间线和事件中混合检索 → Top-K2 时间线 + Top-K3 事件
+```
+
+与投票检索器（VotingRetriever）的区别：
+- **投票检索器**：三层并行检索 → 投票聚合 → 最终排名
+- **三层递进检索器**：逐层递进过滤 → 逐步缩小检索范围 → 最终结果
+
+**参数说明**：
+| 参数 | 类型 | 默认值 | 说明 |
+|------|------|--------|------|
+| enabled | bool | false | 是否启用三层递进检索 |
+| k1_entities | int | 5 | 第一层检索的实体数量 |
+| k2_timelines | int | 10 | 第三层筛选的时间线数量 |
+| k3_events | int | 20 | 第三层筛选的事件数量 |
+| entity_score_threshold | float | 0.0 | 第一层实体分数阈值，低于此分数的实体被过滤 |
+| timeline_score_threshold | float | 0.0 | 第三层时间线分数阈值 |
+| event_score_threshold | float | 0.0 | 第三层事件分数阈值 |
+| include_intermediate_results | bool | false | 是否返回中间层结果（第一层实体、第二层全量时间线/事件） |
+
+**Python API 使用示例**：
+
+```python
+from timeqa_agent.retrievers import HierarchicalRetriever
+from timeqa_agent.config import RetrieverConfig, HierarchicalConfig
+
+# 配置
+retriever_config = RetrieverConfig(top_k=10, use_tfidf=True)
+hierarchical_config = HierarchicalConfig(
+    enabled=True,
+    k1_entities=5,
+    k2_timelines=10,
+    k3_events=20,
+)
+
+# 初始化
+retriever = HierarchicalRetriever(
+    graph_store=graph_store,
+    embed_fn=embed_fn,
+    retriever_config=retriever_config,
+    hierarchical_config=hierarchical_config,
+    index_dir="data/timeqa/indexes",
+)
+
+# 检索（使用配置中的 k1/k2/k3）
+results = retriever.retrieve(query="人工智能的发展历程")
+print(f"事件: {len(results.events)}, 时间线: {len(results.timelines)}")
+
+# 检索时动态覆盖 k1/k2/k3
+results = retriever.retrieve(query="深度学习", k1=3, k2=5, k3=10)
+
+# 调试：查看中间层结果
+results = retriever.retrieve_with_details(query="神经网络")
+print(f"第一层实体: {[e.canonical_name for e in results.layer1_entities]}")
+print(f"第二层收集: {len(results.layer2_all_events)} 事件, {len(results.layer2_all_timelines)} 时间线")
+print(f"第三层筛选: {len(results.events)} 事件, {len(results.timelines)} 时间线")
+
+# 查看事件溯源
+for event in results.events[:3]:
+    print(f"事件: {event.event_description}")
+    print(f"  来源实体: {event.source_entity_names}")
+    print(f"  分数: {event.hierarchical_score:.4f}")
 ```
 
 ## 环境变量
