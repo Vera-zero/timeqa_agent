@@ -16,7 +16,6 @@
     "max_retries": 3,
     "timeout": 180,
     "batch_size": 2,
-    "include_implicit_time": true,
     "enable_multi_round": true,
     "max_rounds": 2,
     "review_temperature": 0.0,
@@ -25,6 +24,14 @@
   },
   "event_filter": {
     "enabled": true
+  },
+  "event_validator": {
+    "enabled": true,
+    "model": "deepseek-chat",
+    "base_url": "https://api.deepseek.com/chat/completions",
+    "temperature": 0,
+    "max_retries": 3,
+    "timeout": 60
   },
   "disambiguator": {
     "embed_model": "deepseek-embed",

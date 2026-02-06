@@ -24,6 +24,7 @@ from dataclasses import dataclass
 from .config import TimeQAConfig, load_config
 from .chunker import DocumentChunker, Chunk
 from .event_extractor import EventExtractor, TimeEvent
+from .event_validator import EventValidator
 from .event_filter import EventFilter
 from .entity_disambiguator import EntityDisambiguator, EntityCluster
 from .timeline_extractor import TimelineExtractor, TimelineExtractionResult
@@ -34,15 +35,17 @@ class Stage(IntEnum):
     """流水线阶段"""
     CHUNK = 1
     EVENT = 2
-    FILTER = 3
-    DISAMBIGUATE = 4
-    TIMELINE = 5
-    GRAPH = 6
+    VALIDATE = 3
+    FILTER = 4
+    DISAMBIGUATE = 5
+    TIMELINE = 6
+    GRAPH = 7
 
 
 STAGE_NAMES = {
     Stage.CHUNK: "chunk",
     Stage.EVENT: "event",
+    Stage.VALIDATE: "event_validate",
     Stage.FILTER: "event_filter",
     Stage.DISAMBIGUATE: "disambiguate",
     Stage.TIMELINE: "timeline",
@@ -96,6 +99,7 @@ class ExtractionPipeline:
         # 懒加载各组件
         self._chunker: Optional[DocumentChunker] = None
         self._event_extractor: Optional[EventExtractor] = None
+        self._event_validator: Optional[EventValidator] = None
         self._event_filter: Optional[EventFilter] = None
         self._disambiguator: Optional[EntityDisambiguator] = None
         self._timeline_extractor: Optional[TimelineExtractor] = None
@@ -115,6 +119,15 @@ class ExtractionPipeline:
                 token=self.token
             )
         return self._event_extractor
+
+    @property
+    def event_validator(self) -> EventValidator:
+        if self._event_validator is None:
+            self._event_validator = EventValidator(
+                self.timeqa_config.event_validator,
+                token=self.token
+            )
+        return self._event_validator
 
     @property
     def event_filter(self) -> EventFilter:
@@ -263,20 +276,64 @@ class ExtractionPipeline:
         
         return events_data
 
-    def run_filter_stage(self, events_data: Optional[List[Dict]] = None) -> List[Dict]:
+    def run_validate_stage(self, events_data: Optional[List[Dict]] = None) -> List[Dict]:
         """
-        阶段3: 事件过滤
+        阶段3: 事件检查
 
         输入: 事件列表
-        输出: 过滤后的事件列表
+        输出: 验证/纠正后的事件列表
         """
         print("\n" + "="*50)
-        print("阶段 3: 事件过滤")
+        print("阶段 3: 事件检查")
         print("="*50)
 
         # 加载或使用传入的事件数据
         if events_data is None:
             input_path = self.pipeline_config.stage_output_path(Stage.EVENT)
+            print(f"加载事件数据: {input_path}")
+            events_data = self._load_json(input_path)
+
+        # 转换为 TimeEvent 对象
+        events = [TimeEvent.from_dict(e) for e in events_data]
+        print(f"共 {len(events)} 个事件待检查")
+
+        if not self.timeqa_config.event_validator.enabled:
+            print("事件检查已禁用，跳过检查")
+            # 即使禁用也保存一份，保证后续阶段读取一致
+            output_path = self.pipeline_config.stage_output_path(Stage.VALIDATE)
+            self._save_json(output_path, events_data)
+            return events_data
+
+        # 检查
+        validated_events = self.event_validator.validate_events(events)
+
+        # 保存
+        output_path = self.pipeline_config.stage_output_path(Stage.VALIDATE)
+        validated_data = [e.to_dict() for e in validated_events]
+        self._save_json(output_path, validated_data)
+
+        return validated_data
+
+    def run_filter_stage(self, events_data: Optional[List[Dict]] = None) -> List[Dict]:
+        """
+        阶段4: 事件过滤
+
+        输入: 事件列表
+        输出: 过滤后的事件列表
+        """
+        print("\n" + "="*50)
+        print("阶段 4: 事件过滤")
+        print("="*50)
+
+        # 加载或使用传入的事件数据
+        if events_data is None:
+            # 优先从事件检查阶段加载，否则从事件抽取阶段加载
+            validate_path = self.pipeline_config.stage_output_path(Stage.VALIDATE)
+            event_path = self.pipeline_config.stage_output_path(Stage.EVENT)
+            if os.path.exists(validate_path):
+                input_path = validate_path
+            else:
+                input_path = event_path
             print(f"加载事件数据: {input_path}")
             events_data = self._load_json(input_path)
 
@@ -303,22 +360,25 @@ class ExtractionPipeline:
 
     def run_disambiguate_stage(self, events_data: Optional[List[Dict]] = None) -> Dict[str, Any]:
         """
-        阶段4: 实体消歧
+        阶段5: 实体消歧
 
         输入: 事件列表
         输出: 实体聚类结果
         """
         print("\n" + "="*50)
-        print("阶段 4: 实体消歧")
+        print("阶段 5: 实体消歧")
         print("="*50)
 
         # 加载或使用传入的事件数据
         if events_data is None:
-            # 优先从事件过滤阶段加载，否则从事件抽取阶段加载
+            # 优先从事件过滤阶段加载，否则从事件检查或事件抽取阶段加载
             filter_path = self.pipeline_config.stage_output_path(Stage.FILTER)
+            validate_path = self.pipeline_config.stage_output_path(Stage.VALIDATE)
             event_path = self.pipeline_config.stage_output_path(Stage.EVENT)
             if os.path.exists(filter_path):
                 input_path = filter_path
+            elif os.path.exists(validate_path):
+                input_path = validate_path
             else:
                 input_path = event_path
             print(f"加载事件数据: {input_path}")
@@ -350,21 +410,24 @@ class ExtractionPipeline:
         disambiguate_data: Optional[Dict] = None,
     ) -> Dict[str, Any]:
         """
-        阶段5: 时间线抽取
+        阶段6: 时间线抽取
 
         输入: 事件列表 + 实体聚类
         输出: 时间线结果
         """
         print("\n" + "="*50)
-        print("阶段 5: 时间线抽取")
+        print("阶段 6: 时间线抽取")
         print("="*50)
-        
+
         # 加载事件数据
         if events_data is None:
             filter_path = self.pipeline_config.stage_output_path(Stage.FILTER)
+            validate_path = self.pipeline_config.stage_output_path(Stage.VALIDATE)
             event_path = self.pipeline_config.stage_output_path(Stage.EVENT)
             if os.path.exists(filter_path):
                 input_path = filter_path
+            elif os.path.exists(validate_path):
+                input_path = validate_path
             else:
                 input_path = event_path
             print(f"加载事件数据: {input_path}")
@@ -411,21 +474,24 @@ class ExtractionPipeline:
         timeline_data: Optional[Dict] = None,
     ) -> Dict[str, Any]:
         """
-        阶段6: 图存储
+        阶段7: 图存储
 
         输入: 事件 + 实体聚类 + 时间线
         输出: 知识图谱
         """
         print("\n" + "="*50)
-        print("阶段 6: 图存储")
+        print("阶段 7: 图存储")
         print("="*50)
-        
+
         # 加载数据
         if events_data is None:
             filter_path = self.pipeline_config.stage_output_path(Stage.FILTER)
+            validate_path = self.pipeline_config.stage_output_path(Stage.VALIDATE)
             event_path = self.pipeline_config.stage_output_path(Stage.EVENT)
             if os.path.exists(filter_path):
                 input_path = filter_path
+            elif os.path.exists(validate_path):
+                input_path = validate_path
             else:
                 input_path = event_path
             print(f"加载事件数据: {input_path}")
@@ -506,6 +572,10 @@ class ExtractionPipeline:
                 events_data = self.run_event_stage(chunks_data)
                 results["event"] = {"num_events": len(events_data)}
 
+            elif stage == Stage.VALIDATE:
+                events_data = self.run_validate_stage(events_data)
+                results["event_validate"] = {"num_events": len(events_data)}
+
             elif stage == Stage.FILTER:
                 events_data = self.run_filter_stage(events_data)
                 results["event_filter"] = {"num_events": len(events_data)}
@@ -551,7 +621,10 @@ def parse_args() -> argparse.Namespace:
   # 只执行分块和事件抽取
   python -m timeqa_agent.pipeline --split test --start chunk --end event
 
-  # 从事件过滤阶段开始（使用已有的事件抽取结果）
+  # 从事件检查阶段开始（使用已有的事件抽取结果）
+  python -m timeqa_agent.pipeline --split test --start event_validate
+
+  # 从事件过滤阶段开始（使用已有的事件检查结果）
   python -m timeqa_agent.pipeline --split test --start event_filter
         """
     )

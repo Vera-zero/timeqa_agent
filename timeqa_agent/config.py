@@ -114,6 +114,29 @@ class EventFilterConfig:
 
 
 @dataclass
+class EventValidatorConfig:
+    """事件检查配置"""
+    # 是否启用事件检查
+    enabled: bool = True
+
+    # API 配置（用于 LLM 纠正时间格式）
+    model: str = "deepseek-chat"
+    base_url: str = "https://api.deepseek.com/chat/completions"
+    temperature: float = 0.0
+    max_retries: int = 3
+    timeout: int = 60
+
+    def to_dict(self) -> Dict[str, Any]:
+        """转换为字典"""
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "EventValidatorConfig":
+        """从字典创建"""
+        return cls(**data)
+
+
+@dataclass
 class DisambiguatorConfig:
     """实体消歧配置"""
     # Embedding API 配置
@@ -399,6 +422,7 @@ class TimeQAConfig:
     chunk: ChunkConfig = field(default_factory=ChunkConfig)
     extractor: ExtractorConfig = field(default_factory=ExtractorConfig)
     event_filter: EventFilterConfig = field(default_factory=EventFilterConfig)
+    event_validator: EventValidatorConfig = field(default_factory=EventValidatorConfig)
     disambiguator: DisambiguatorConfig = field(default_factory=DisambiguatorConfig)
     timeline: TimelineConfig = field(default_factory=TimelineConfig)
     graph_store: GraphStoreConfig = field(default_factory=GraphStoreConfig)
@@ -418,6 +442,7 @@ class TimeQAConfig:
             "chunk": self.chunk.to_dict(),
             "extractor": self.extractor.to_dict(),
             "event_filter": self.event_filter.to_dict(),
+            "event_validator": self.event_validator.to_dict(),
             "disambiguator": self.disambiguator.to_dict(),
             "timeline": self.timeline.to_dict(),
             "graph_store": self.graph_store.to_dict(),
@@ -437,6 +462,7 @@ class TimeQAConfig:
             chunk=ChunkConfig.from_dict(data.get("chunk", {})),
             extractor=ExtractorConfig.from_dict(data.get("extractor", {})),
             event_filter=EventFilterConfig.from_dict(data.get("event_filter", {})),
+            event_validator=EventValidatorConfig.from_dict(data.get("event_validator", {})),
             disambiguator=DisambiguatorConfig.from_dict(data.get("disambiguator", {})),
             timeline=TimelineConfig.from_dict(data.get("timeline", {})),
             graph_store=GraphStoreConfig.from_dict(data.get("graph_store", {})),

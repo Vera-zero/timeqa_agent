@@ -32,6 +32,7 @@ timeqa_agent/
 │   ├── config.py              # 配置模块
 │   ├── chunker.py             # 文档分块器
 │   ├── event_extractor.py     # 时间事件抽取器
+│   ├── event_validator.py     # 事件检查器（时间格式校验）
 │   ├── event_filter.py        # 事件过滤器（去除 chunk 重叠产生的重复事件）
 │   ├── entity_disambiguator.py # 实体消歧器
 │   ├── timeline_extractor.py  # 时间线抽取器
@@ -62,10 +63,11 @@ timeqa_agent/
 |------|------|------|------|
 | 1 | chunk | 语料库文档 | 文档分块 |
 | 2 | event | 分块 | 时间事件 |
-| 3 | event_filter | 事件 | 过滤后的事件（去重 + 保留最细粒度） |
-| 4 | disambiguate | 过滤后的事件 | 实体聚类 |
-| 5 | timeline | 事件+实体 | 时间线 |
-| 6 | graph | 全部 | 知识图谱 |
+| 3 | event_validate | 事件 | 时间格式校验后的事件 |
+| 4 | event_filter | 事件 | 过滤后的事件（去重 + 保留最细粒度） |
+| 5 | disambiguate | 过滤后的事件 | 实体聚类 |
+| 6 | timeline | 事件+实体 | 时间线 |
+| 7 | graph | 全部 | 知识图谱 |
 
 ## 命令行使用
 
@@ -94,7 +96,10 @@ python -m timeqa_agent.pipeline --split test --start event
 # 只执行分块和事件抽取
 python -m timeqa_agent.pipeline --split test --start chunk --end event
 
-# 从事件过滤阶段开始（使用已有的事件抽取结果）
+# 从事件检查阶段开始（使用已有的事件抽取结果）
+python -m timeqa_agent.pipeline --split test --start event_validate
+
+# 从事件过滤阶段开始（使用已有的事件检查结果）
 python -m timeqa_agent.pipeline --split test --start event_filter
 
 # 只执行时间线抽取
@@ -505,6 +510,7 @@ data/timeqa/
 │   ├── test.json           # 全量模式
 │   └── test_doc0.json      # 单文档模式
 ├── event/
+├── event_validate/
 ├── event_filter/
 ├── disambiguate/
 ├── timeline/
@@ -517,6 +523,7 @@ data/timeqa/
 from timeqa_agent import (
     DocumentChunker,
     EventExtractor,
+    EventValidator,
     EventFilter,
     EntityDisambiguator,
     TimelineExtractor,
@@ -756,6 +763,44 @@ python -m timeqa_agent.event_filter -i data/timeqa/event/test_doc0.json -o data/
 
 # 使用配置文件
 python -m timeqa_agent.event_filter -i data/timeqa/event/test.json -o data/timeqa/event_filter/test.json --config configs/timeqa_config.json
+```
+
+### 事件检查配置 (event_validator)
+
+```json
+{
+  "event_validator": {
+    "enabled": true,                              // 是否启用事件检查
+    "model": "deepseek-chat",                     // LLM 模型名称（用于时间格式纠正）
+    "base_url": "https://api.deepseek.com/chat/completions",  // API 端点
+    "temperature": 0,                             // 生成温度
+    "max_retries": 3,                             // 最大重试次数
+    "timeout": 60                                 // 请求超时（秒）
+  }
+}
+```
+
+**功能说明**：
+
+事件检查阶段用于验证并纠正事件的时间格式。时间格式必须符合以下规范：
+- `YYYY`（如 "2008"）
+- `YYYY-MM`（如 "2008-07"）
+- `YYYY-MM-DD`（如 "2008-07-15"）
+- `null`（时间无法从上下文确定）
+
+检查流程：
+1. **格式检查**：使用正则表达式检查 `time_start` 和 `time_end` 是否符合规范格式
+2. **规则修复**：对于不规范的时间字符串，首先尝试使用正则表达式提取合法时间
+3. **LLM 纠正**：如果规则修复失败，调用 LLM 根据上下文重新解析和纠正时间
+
+**独立使用**：
+
+```bash
+# 检查单文档事件
+python -m timeqa_agent.event_validator -i data/timeqa/event/test_doc0.json -o data/timeqa/event_validate/test_doc0.json
+
+# 使用配置文件
+python -m timeqa_agent.event_validator -i data/timeqa/event/test.json -o data/timeqa/event_validate/test.json --config configs/timeqa_config.json
 ```
 
 ### 实体消歧配置 (disambiguator)

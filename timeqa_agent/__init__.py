@@ -14,6 +14,7 @@ from .config import (
     ChunkConfig,
     ExtractorConfig,
     EventFilterConfig,
+    EventValidatorConfig,
     DisambiguatorConfig,
     TimelineConfig,
     GraphStoreConfig,
@@ -29,6 +30,7 @@ from .config import (
 )
 from .chunker import Chunk, DocumentChunker
 from .event_extractor import TimeType, Entity, TimeEvent, EventExtractor
+from .event_validator import EventValidator
 from .event_filter import EventFilter
 from .entity_disambiguator import EntityCluster, EntityDisambiguator
 from .timeline_extractor import Timeline, StandaloneEvent, TimelineExtractionResult, TimelineExtractor
@@ -73,6 +75,7 @@ __all__ = [
     "ChunkConfig",
     "ExtractorConfig",
     "EventFilterConfig",
+    "EventValidatorConfig",
     "DisambiguatorConfig",
     "TimelineConfig",
     "GraphStoreConfig",
@@ -93,6 +96,8 @@ __all__ = [
     "Entity",
     "TimeEvent",
     "EventExtractor",
+    # Event Validator
+    "EventValidator",
     # Event Filter
     "EventFilter",
     # Entity Disambiguator
