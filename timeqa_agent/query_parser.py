@@ -31,7 +31,7 @@ class TimeConstraintType(str, Enum):
 class EventType(str, Enum):
     """事件类型"""
     POINT = "point"        # 时间点事件，如 "出生"、"获奖"、"签约"
-    DURATION = "duration"  # 时间段事件，如 "任职"、"效力于某球队"、"居住在某地"
+    INTERVAL = "interval"  # 时间段事件，如 "任职"、"效力于某球队"、"居住在某地"
 
 
 class AnswerType(str, Enum):
@@ -148,7 +148,7 @@ class QueryParserOutput:
 PARSE_SYSTEM_PROMPT = """You are an expert in temporal question analysis. Your task is to decompose a question into multiple parts:
 1. **Question Stem**: The core question without temporal constraints
 2. **Time Constraint**: The temporal constraint (if any)
-3. **Event Type**: Whether the question asks about a point-in-time event or a duration event
+3. **Event Type**: Whether the question asks about a point-in-time event or an interval event
 4. **Answer Type**: The expected type of answer
 
 ## Time Constraint Types
@@ -158,7 +158,7 @@ PARSE_SYSTEM_PROMPT = """You are an expert in temporal question analysis. Your t
 
 ## Event Types
 - **point**: Point-in-time events that occur at a specific moment, such as "birth", "death", "won an award", "signed a contract", "was appointed"
-- **duration**: Duration events that span a period of time, such as "served as", "played for", "worked at", "lived in", "held a position"
+- **interval**: Interval events that span a period of time, such as "served as", "played for", "worked at", "lived in", "held a position"
 
 ## Answer Types
 - **entity**: Entity answers like person names, place names, organization names (Who, Which team, Where, What company)
@@ -178,7 +178,7 @@ Output a JSON object with the following structure:
     "normalized_time": "Standardized time if explicit (e.g., 2007, 1990-2000), null if implicit or none",
     "description": "Description of the time constraint"
   },
-  "event_type": "point|duration",
+  "event_type": "point|interval",
   "answer_type": "entity|time|number|boolean|other"
 }
 ```
@@ -196,7 +196,7 @@ Output:
     "normalized_time": "2013",
     "description": "The year 2013"
   },
-  "event_type": "duration",
+  "event_type": "interval",
   "answer_type": "entity"
 }
 ```
@@ -212,7 +212,7 @@ Output:
     "normalized_time": null,
     "description": "During Anna Karina's involvement in the French New Wave cinema movement (1960s)"
   },
-  "event_type": "duration",
+  "event_type": "interval",
   "answer_type": "entity"
 }
 ```
@@ -228,7 +228,7 @@ Output:
     "normalized_time": "1969-1976",
     "description": "The period from 1969 to 1976"
   },
-  "event_type": "duration",
+  "event_type": "interval",
   "answer_type": "entity"
 }
 ```
@@ -260,7 +260,7 @@ Output:
     "normalized_time": "2008-2009",
     "description": "The 2008-2009 football season"
   },
-  "event_type": "duration",
+  "event_type": "interval",
   "answer_type": "number"
 }
 ```
@@ -276,7 +276,7 @@ Output:
     "normalized_time": null,
     "description": "Before the American Civil War (before April 1861)"
   },
-  "event_type": "duration",
+  "event_type": "interval",
   "answer_type": "boolean"
 }
 ```
@@ -285,7 +285,7 @@ Output:
 1. Keep the question stem as close to the original as possible, only removing the time constraint part
 2. For implicit time constraints, provide a helpful description that explains the time period
 3. If there are multiple time constraints, focus on the primary one
-4. For event type: "played for", "worked at", "served as" are typically duration events; "won", "signed", "born", "died" are point events
+4. For event type: "played for", "worked at", "served as" are typically interval events; "won", "signed", "born", "died" are point events
 5. Determine answer type based on the question word: Who/Which/Where -> entity, When -> time, How many -> number, Did/Was/Is -> boolean
 """
 
@@ -313,10 +313,10 @@ RETRIEVAL_SYSTEM_PROMPT = """You are an expert in generating retrieval queries f
    - Format: "[Entity Name]'s [aspect/career/life phase]"
    - Focus on the aspect of the entity's life/career that is relevant to the question
 
-3. **Event Queries**: Generate multiple queries to retrieve relevant events
-   - Convert the question stem into declarative statements
-   - Generate multiple variations based on common knowledge
-   - Each query should be a statement describing a potential event/fact
+3. **Event Queries**: Generate event query to retrieve relevant events
+   - Use the question stem directly as the event query
+   - Do NOT generate additional variations or common knowledge based statements
+   - Only output the question stem itself
 
 ## Output Format
 ```json
@@ -324,9 +324,7 @@ RETRIEVAL_SYSTEM_PROMPT = """You are an expert in generating retrieval queries f
   "entity_query": "Entity name + brief description",
   "timeline_query": "Timeline name + description + related entities",
   "event_queries": [
-    "Declarative statement 1",
-    "Declarative statement 2",
-    ...
+    "Question stem"
   ]
 }
 ```
@@ -342,11 +340,7 @@ Output:
   "entity_query": "Thierry Audel, a French professional footballer who plays as a centre back",
   "timeline_query": "Thierry Audel's football career",
   "event_queries": [
-    "Thierry Audel played for Macclesfield Town",
-    "Thierry Audel played for Crewe Alexandra",
-    "Thierry Audel played for Lincoln City",
-    "Thierry Audel joined a football club",
-    "Thierry Audel transferred to a new team"
+    "Which team did Thierry Audel play for?"
   ]
 }
 ```
@@ -360,11 +354,7 @@ Output:
   "entity_query": "Anna Karina, a Danish-French film actress, director, writer, and singer",
   "timeline_query": "Anna Karina's personal life and marriages",
   "event_queries": [
-    "Anna Karina married Jean-Luc Godard",
-    "Anna Karina married Pierre Fabre",
-    "Anna Karina married Daniel Duval",
-    "Anna Karina married Dennis Berry",
-    "Anna Karina's marriage and divorce"
+    "Who was Anna Karina married to?"
   ]
 }
 ```
@@ -378,11 +368,7 @@ Output:
   "entity_query": "Carl Eric Almgren, a Swedish Army officer and general",
   "timeline_query": "Carl Eric Almgren's military career",
   "event_queries": [
-    "Carl Eric Almgren served as Chief of the Army",
-    "Carl Eric Almgren served as Chief of the Defence Staff",
-    "Carl Eric Almgren served as military commander of the Eastern Military District",
-    "Carl Eric Almgren held a position in the Swedish Army",
-    "Carl Eric Almgren was promoted to general"
+    "What position did Carl Eric Almgren hold?"
   ]
 }
 ```
@@ -396,20 +382,16 @@ Output:
   "entity_query": "Knox Cunningham, a Northern Irish barrister, businessman and politician",
   "timeline_query": "Knox Cunningham's political career",
   "event_queries": [
-    "Knox Cunningham served as Parliamentary Private Secretary to Harold Macmillan",
-    "Knox Cunningham served as Parliamentary Private Secretary to Jocelyn Simon",
-    "Knox Cunningham held political office in the UK Parliament",
-    "Knox Cunningham was elected MP for South Antrim"
+    "Who did Knox Cunningham serve as Parliamentary Private Secretary to?"
   ]
 }
 ```
 
 ## Important Notes
-1. Generate 3-7 event queries, covering different possible answers based on common knowledge
+1. The event query MUST be the question stem itself - do NOT add any variations
 2. Use the entity's commonly known canonical name in all queries
 3. The timeline query should focus on the relevant aspect (career, education, achievements, etc.)
-4. Event queries should be declarative statements that could match events in a knowledge base
-5. Be creative but factual - generate queries for plausible events/facts
+4. Do NOT generate additional queries based on common knowledge
 """
 
 RETRIEVAL_USER_PROMPT = """Generate retrieval queries for the following question stem:
