@@ -74,8 +74,6 @@ class ExtractorConfig:
 
     # 抽取配置
     batch_size: int = 1            # 文档级批处理大小（batch_size=1顺序处理，>1批处理模式）
-    include_implicit_time: bool = True  # 是否包含隐式时间引用
-
     # 多轮抽取配置
     enable_multi_round: bool = True    # 是否启用多轮抽取
     max_rounds: int = 2               # 最大抽取轮数

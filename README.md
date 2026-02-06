@@ -669,7 +669,6 @@ chunk_data = retriever.get_chunk_by_event(events[0], chunks_dict)
     "max_retries": 3,                   // 最大重试次数
     "timeout": 180,                     // 请求超时（秒）。复杂文档建议 180-300
     "batch_size": 1,                    // 文档级批处理大小（batch_size=1顺序处理，>1批处理模式）
-    "include_implicit_time": true,      // 是否抽取隐式时间（如"去年"、"上个月"）
     "enable_multi_round": true,         // 是否启用多轮抽取
     "max_rounds": 2,                    // 最大抽取轮数
     "review_temperature": 0.0,          // 审查轮次的温度参数
@@ -727,7 +726,6 @@ chunk_data = retriever.get_chunk_by_event(events[0], chunks_dict)
 **建议**：
 - temperature 保持低值（0.1-0.2）确保抽取结果稳定
 - 长文档增加 timeout 避免超时
-- include_implicit_time 开启可捕获更多时间信息，但可能增加噪音
 - 传记类文档建议使用 `sliding_window` 模式，以便利用出生日期等关键时间锚点
 - 默认 `batch_size=1` 确保稳定性；API 限速宽松时可设置为 3-5 提高速度
 - 传记类长文档建议保持 `batch_size=1`，因为前置事件上下文很重要
