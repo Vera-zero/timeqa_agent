@@ -445,6 +445,110 @@ class RetrieverCLI:
             query, entity_name, top_k=top_k
         )
     
+    def cmd_get_chunks(
+        self,
+        query: str,
+        chunks_store: str,
+        mode: str = "hybrid",
+        top_k: int = 10,
+        deduplicate: bool = True,
+    ) -> List[dict]:
+        """
+        检索事件并获取对应的chunks
+
+        Args:
+            query: 查询字符串
+            chunks_store: chunk数据文件路径
+            mode: 检索模式（hybrid/keyword/semantic）
+            top_k: 检索事件数量
+            deduplicate: 是否去重chunks
+
+        Returns:
+            chunk列表
+        """
+        # 先执行检索
+        results = self.cmd_search(query, mode=mode, target_type="event", top_k=top_k)
+
+        # 过滤出EventResult
+        events = [r for r in results if isinstance(r, EventResult)]
+
+        if not events:
+            print("未检索到事件结果")
+            return []
+
+        # 获取对应的chunks
+        chunks = self.retriever.get_chunks_for_events(events, chunks_store, deduplicate)
+
+        return chunks
+
+    def cmd_get_surrounding(
+        self,
+        chunk_id: str,
+        chunks_store: str,
+        before: int = 1,
+        after: int = 1,
+    ) -> Optional[dict]:
+        """
+        获取指定chunk的前后上下文
+
+        Args:
+            chunk_id: chunk的唯一标识
+            chunks_store: chunk数据文件路径
+            before: 获取前面N个chunk
+            after: 获取后面N个chunk
+
+        Returns:
+            包含前后chunk的字典
+        """
+        result = self.retriever.get_surrounding_chunks(
+            chunk_id, chunks_store, before, after
+        )
+        return result
+
+    def cmd_get_surrounding_by_event(
+        self,
+        query: str,
+        chunks_store: str,
+        mode: str = "hybrid",
+        before: int = 1,
+        after: int = 1,
+    ) -> List[dict]:
+        """
+        检索事件并获取对应chunk的前后上下文
+
+        Args:
+            query: 查询字符串
+            chunks_store: chunk数据文件路径
+            mode: 检索模式
+            before: 获取前面N个chunk
+            after: 获取后面N个chunk
+
+        Returns:
+            每个事件对应的上下文结果列表
+        """
+        # 先执行检索
+        results = self.cmd_search(query, mode=mode, target_type="event", top_k=5)
+
+        # 过滤出EventResult
+        events = [r for r in results if isinstance(r, EventResult)]
+
+        if not events:
+            print("未检索到事件结果")
+            return []
+
+        # 获取每个事件的前后chunk
+        surrounding_results = []
+        for event in events:
+            result = self.retriever.get_surrounding_chunks_by_event(
+                event, chunks_store, before, after
+            )
+            if result:
+                result["event_id"] = event.event_id
+                result["event_description"] = event.event_description
+                surrounding_results.append(result)
+
+        return surrounding_results
+
     def cmd_stats(self):
         """显示统计信息"""
         stats = self.store.get_stats()
@@ -483,7 +587,13 @@ class RetrieverCLI:
         print("  hierarchical <query>             - 三层递进检索")
         print("  hierarchical-details <query>     - 三层递进检索（含中间层信息）")
         print("  entity <name> <query>            - 实体上下文检索")
-        print("  type <entity|event|timeline>    - 设置目标类型过滤")
+        print("  get-chunks <query>               - 检索事件并获取对应chunks（需要chunks_path）")
+        print("  surrounding <chunk_id>           - 获取指定chunk的前后上下文")
+        print("  surrounding-event <query>        - 检索事件并获取chunk前后上下文")
+        print("  chunks-path <path>               - 设置chunks数据文件路径")
+        print("  before <n>                       - 设置获取前面N个chunk（默认1）")
+        print("  after <n>                        - 设置获取后面N个chunk（默认1）")
+        print("  type <entity|event|timeline>     - 设置目标类型过滤")
         print("  topk <n>                         - 设置返回数量")
         print("  k1 <n>                           - 设置三层递进检索实体数量")
         print("  k2 <n>                           - 设置三层递进检索时间线数量")
@@ -504,6 +614,9 @@ class RetrieverCLI:
         h_k1 = None
         h_k2 = None
         h_k3 = None
+        chunks_path = None  # chunks数据文件路径
+        context_before = 1  # 前面chunk数量
+        context_after = 1   # 后面chunk数量
         
         while True:
             try:
@@ -526,6 +639,126 @@ class RetrieverCLI:
                 elif cmd == "verbose":
                     self.verbose = not self.verbose
                     print(f"详细输出: {'开启' if self.verbose else '关闭'}")
+                elif cmd == "chunks-path":
+                    if arg and Path(arg).exists():
+                        chunks_path = arg
+                        print(f"chunks路径设置为: {chunks_path}")
+                    elif arg:
+                        print(f"警告: 文件不存在: {arg}")
+                    else:
+                        print("用法: chunks-path <文件路径>")
+                elif cmd == "get-chunks" and arg:
+                    if not chunks_path:
+                        print("错误: 请先使用 'chunks-path' 命令设置chunks数据文件路径")
+                        continue
+                    try:
+                        chunks = self.cmd_get_chunks(arg, chunks_path, mode="hybrid", top_k=top_k)
+                        print(f"\n查询 '{arg}' 找到 {len(chunks)} 个chunk:")
+                        for i, chunk in enumerate(chunks, 1):
+                            print(f"\n--- Chunk {i} ---")
+                            print(f"  ID: {chunk.get('chunk_id', 'N/A')}")
+                            print(f"  文档: {chunk.get('doc_title', 'N/A')} ({chunk.get('doc_id', 'N/A')})")
+                            content = chunk.get('content', '')
+                            if content:
+                                preview = content[:150] + "..." if len(content) > 150 else content
+                                print(f"  内容: {preview}")
+                            if self.verbose:
+                                print(f"  完整内容: {content}")
+                    except Exception as e:
+                        print(f"获取chunks失败: {e}")
+                elif cmd == "surrounding" and arg:
+                    if not chunks_path:
+                        print("错误: 请先使用 'chunks-path' 命令设置chunks数据文件路径")
+                        continue
+                    try:
+                        result = self.cmd_get_surrounding(arg, chunks_path, context_before, context_after)
+                        if result:
+                            print(f"\nChunk '{arg}' 的前后上下文:")
+                            print(f"文档: {result['doc_id']}, 当前索引: {result['chunk_index']}")
+                            print(f"共 {result['total_chunks']} 个chunks")
+
+                            # 前面的chunks
+                            if result['before']:
+                                print(f"\n前面 {len(result['before'])} 个chunks:")
+                                for i, chunk in enumerate(result['before']):
+                                    print(f"\n  [{chunk.get('chunk_id')}]")
+                                    content = chunk.get('content', '')
+                                    preview = content[:100] + "..." if len(content) > 100 else content
+                                    print(f"  {preview}")
+
+                            # 当前chunk
+                            print(f"\n当前chunk:")
+                            print(f"  [{result['current'].get('chunk_id')}]")
+                            content = result['current'].get('content', '')
+                            preview = content[:150] + "..." if len(content) > 150 else content
+                            print(f"  {preview}")
+                            if self.verbose:
+                                print(f"\n  完整内容:\n{content}")
+
+                            # 后面的chunks
+                            if result['after']:
+                                print(f"\n后面 {len(result['after'])} 个chunks:")
+                                for i, chunk in enumerate(result['after']):
+                                    print(f"\n  [{chunk.get('chunk_id')}]")
+                                    content = chunk.get('content', '')
+                                    preview = content[:100] + "..." if len(content) > 100 else content
+                                    print(f"  {preview}")
+                        else:
+                            print(f"未找到chunk: {arg}")
+                    except Exception as e:
+                        print(f"获取上下文失败: {e}")
+                elif cmd == "surrounding-event" and arg:
+                    if not chunks_path:
+                        print("错误: 请先使用 'chunks-path' 命令设置chunks数据文件路径")
+                        continue
+                    try:
+                        results = self.cmd_get_surrounding_by_event(
+                            arg, chunks_path, mode="hybrid",
+                            before=context_before, after=context_after
+                        )
+                        print(f"\n查询 '{arg}' 找到 {len(results)} 个事件的上下文:")
+                        for idx, result in enumerate(results, 1):
+                            print(f"\n{'='*60}")
+                            print(f"事件 {idx}: {result['event_description'][:80]}")
+                            print(f"事件ID: {result['event_id']}")
+                            print(f"Chunk索引: {result['chunk_index']} (共 {result['total_chunks']} 个chunks)")
+                            print(f"{'='*60}")
+
+                            # 前面的chunks
+                            if result['before']:
+                                print(f"\n前面 {len(result['before'])} 个chunks:")
+                                for chunk in result['before']:
+                                    content = chunk.get('content', '')
+                                    preview = content[:80] + "..." if len(content) > 80 else content
+                                    print(f"  - {preview}")
+
+                            # 当前chunk（包含事件）
+                            print(f"\n当前chunk (包含此事件):")
+                            content = result['current'].get('content', '')
+                            preview = content[:120] + "..." if len(content) > 120 else content
+                            print(f"  ★ {preview}")
+
+                            # 后面的chunks
+                            if result['after']:
+                                print(f"\n后面 {len(result['after'])} 个chunks:")
+                                for chunk in result['after']:
+                                    content = chunk.get('content', '')
+                                    preview = content[:80] + "..." if len(content) > 80 else content
+                                    print(f"  - {preview}")
+                    except Exception as e:
+                        print(f"获取事件上下文失败: {e}")
+                elif cmd == "before":
+                    try:
+                        context_before = int(arg)
+                        print(f"前面chunk数量设置为: {context_before}")
+                    except ValueError:
+                        print("用法: before <数字>")
+                elif cmd == "after":
+                    try:
+                        context_after = int(arg)
+                        print(f"后面chunk数量设置为: {context_after}")
+                    except ValueError:
+                        print("用法: after <数字>")
                 elif cmd == "type":
                     if arg in ("entity", "event", "timeline", "all"):
                         target_type = arg
@@ -681,6 +914,15 @@ def main():
   # 三层递进检索（含中间层详情）
   python -m timeqa_agent.retriever_cli -g data/timeqa/graph/test.json hierarchical-details "career history"
 
+  # 获取检索结果对应的chunks
+  python -m timeqa_agent.retriever_cli -g data/timeqa/graph/test.json get-chunks "John career" --chunks data/timeqa/chunk/test.json
+
+  # 获取指定chunk的前后上下文
+  python -m timeqa_agent.retriever_cli -g data/timeqa/graph/test.json surrounding "doc-00000-chunk-0005" --chunks data/timeqa/chunk/test.json --before 2 --after 2
+
+  # 检索事件并获取其chunk的前后上下文
+  python -m timeqa_agent.retriever_cli -g data/timeqa/graph/test.json surrounding-event "John career" --chunks data/timeqa/chunk/test.json --before 1 --after 1
+
   # 只检索事件
   python -m timeqa_agent.retriever_cli -g data/timeqa/graph/test.json search "2020" -t event
 
@@ -722,7 +964,7 @@ def main():
         "command",
         nargs="?",
         default="interactive",
-        help="命令: search, keyword, semantic, voting, voting-details, hierarchical, hierarchical-details, entity-search, stats, interactive"
+        help="命令: search, keyword, semantic, voting, voting-details, hierarchical, hierarchical-details, entity-search, get-chunks, surrounding, surrounding-event, stats, interactive"
     )
     
     parser.add_argument(
@@ -806,7 +1048,26 @@ def main():
         action="store_true",
         help="强制重新构建向量索引"
     )
-    
+
+    parser.add_argument(
+        "--chunks",
+        help="chunks数据文件路径（用于get-chunks命令）"
+    )
+
+    parser.add_argument(
+        "--before",
+        type=int,
+        default=1,
+        help="获取前面N个chunk（用于surrounding命令，默认1）"
+    )
+
+    parser.add_argument(
+        "--after",
+        type=int,
+        default=1,
+        help="获取后面N个chunk（用于surrounding命令，默认1）"
+    )
+
     args = parser.parse_args()
     
     # 如果需要重建索引，跳过自动加载
@@ -929,6 +1190,113 @@ def main():
             print_json(results.to_dict())
         else:
             print_hierarchical_results(results, query, cli.verbose)
+    elif cmd == "get-chunks" and cmd_args:
+        query = " ".join(cmd_args)
+        if not args.chunks:
+            print("错误: 请使用 --chunks 参数指定chunks数据文件路径")
+            sys.exit(1)
+        chunks = cli.cmd_get_chunks(query, args.chunks, mode="hybrid", top_k=args.top_k)
+        if args.json:
+            print_json(chunks)
+        else:
+            print(f"\n查询 '{query}' 找到 {len(chunks)} 个chunk:")
+            for i, chunk in enumerate(chunks, 1):
+                print(f"\n--- Chunk {i} ---")
+                print(f"  ID: {chunk.get('chunk_id', 'N/A')}")
+                print(f"  文档: {chunk.get('doc_title', 'N/A')} ({chunk.get('doc_id', 'N/A')})")
+                content = chunk.get('content', '')
+                if content:
+                    preview = content[:200] + "..." if len(content) > 200 else content
+                    print(f"  内容: {preview}")
+                if cli.verbose:
+                    print(f"\n  完整内容:\n{content}")
+    elif cmd == "surrounding" and cmd_args:
+        chunk_id = " ".join(cmd_args)
+        if not args.chunks:
+            print("错误: 请使用 --chunks 参数指定chunks数据文件路径")
+            sys.exit(1)
+        result = cli.cmd_get_surrounding(chunk_id, args.chunks, args.before, args.after)
+        if args.json:
+            print_json(result)
+        else:
+            if result:
+                print(f"\nChunk '{chunk_id}' 的前后上下文:")
+                print(f"文档: {result['doc_id']}, 当前索引: {result['chunk_index']}")
+                print(f"共 {result['total_chunks']} 个chunks")
+
+                # 前面的chunks
+                if result['before']:
+                    print(f"\n前面 {len(result['before'])} 个chunks:")
+                    for chunk in result['before']:
+                        print(f"\n  [{chunk.get('chunk_id')}]")
+                        content = chunk.get('content', '')
+                        preview = content[:150] + "..." if len(content) > 150 else content
+                        print(f"  {preview}")
+
+                # 当前chunk
+                print(f"\n当前chunk:")
+                print(f"  [{result['current'].get('chunk_id')}]")
+                content = result['current'].get('content', '')
+                if cli.verbose:
+                    print(f"  {content}")
+                else:
+                    preview = content[:200] + "..." if len(content) > 200 else content
+                    print(f"  {preview}")
+
+                # 后面的chunks
+                if result['after']:
+                    print(f"\n后面 {len(result['after'])} 个chunks:")
+                    for chunk in result['after']:
+                        print(f"\n  [{chunk.get('chunk_id')}]")
+                        content = chunk.get('content', '')
+                        preview = content[:150] + "..." if len(content) > 150 else content
+                        print(f"  {preview}")
+            else:
+                print(f"未找到chunk: {chunk_id}")
+    elif cmd == "surrounding-event" and cmd_args:
+        query = " ".join(cmd_args)
+        if not args.chunks:
+            print("错误: 请使用 --chunks 参数指定chunks数据文件路径")
+            sys.exit(1)
+        results = cli.cmd_get_surrounding_by_event(
+            query, args.chunks, mode="hybrid",
+            before=args.before, after=args.after
+        )
+        if args.json:
+            print_json(results)
+        else:
+            print(f"\n查询 '{query}' 找到 {len(results)} 个事件的上下文:")
+            for idx, result in enumerate(results, 1):
+                print(f"\n{'='*60}")
+                print(f"事件 {idx}: {result['event_description'][:80]}")
+                print(f"事件ID: {result['event_id']}")
+                print(f"Chunk: {result['current'].get('chunk_id')} (索引 {result['chunk_index']})")
+                print(f"{'='*60}")
+
+                # 前面的chunks
+                if result['before']:
+                    print(f"\n前面 {len(result['before'])} 个chunks:")
+                    for chunk in result['before']:
+                        content = chunk.get('content', '')
+                        preview = content[:100] + "..." if len(content) > 100 else content
+                        print(f"  - {preview}")
+
+                # 当前chunk
+                print(f"\n当前chunk (包含此事件):")
+                content = result['current'].get('content', '')
+                if cli.verbose:
+                    print(f"  ★ {content}")
+                else:
+                    preview = content[:150] + "..." if len(content) > 150 else content
+                    print(f"  ★ {preview}")
+
+                # 后面的chunks
+                if result['after']:
+                    print(f"\n后面 {len(result['after'])} 个chunks:")
+                    for chunk in result['after']:
+                        content = chunk.get('content', '')
+                        preview = content[:100] + "..." if len(content) > 100 else content
+                        print(f"  - {preview}")
     else:
         parser.print_help()
 

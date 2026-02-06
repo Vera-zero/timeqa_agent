@@ -196,6 +196,15 @@ python -m timeqa_agent.retriever_cli -g data/timeqa/graph/test.json hierarchical
 # 三层递进检索（含中间层详情）
 python -m timeqa_agent.retriever_cli -g data/timeqa/graph/test.json hierarchical-details "career history"
 
+# 获取检索结果对应的chunks（事件溯源到原始文本）
+python -m timeqa_agent.retriever_cli -g data/timeqa/graph/test.json get-chunks "John career" --chunks data/timeqa/chunk/test.json
+
+# 获取指定chunk的前后上下文
+python -m timeqa_agent.retriever_cli -g data/timeqa/graph/test.json surrounding "doc-00000-chunk-0005" --chunks data/timeqa/chunk/test.json --before 2 --after 2
+
+# 检索事件并获取其chunk的前后上下文
+python -m timeqa_agent.retriever_cli -g data/timeqa/graph/test.json surrounding-event "John career" --chunks data/timeqa/chunk/test.json --before 1 --after 1
+
 # 只检索事件
 python -m timeqa_agent.retriever_cli -g data/timeqa/graph/test.json search "2020" -t event
 
@@ -224,6 +233,157 @@ python -m timeqa_agent.retriever_cli -g data/timeqa/graph/test.json search "John
 python -m timeqa_agent.retriever_cli -g data/timeqa/graph/test.json search "John" -v
 ```
 
+### 事件溯源到Chunk功能
+
+检索器提供了从事件溯源到原始文本chunk的功能，帮助您找到事件的上下文来源。
+
+#### 1. 获取事件对应的chunks
+
+**命令行使用**：
+
+```bash
+# 检索事件并获取对应的chunks
+python -m timeqa_agent.retriever_cli -g data/timeqa/graph/test.json get-chunks "John career" --chunks data/timeqa/chunk/test.json
+
+# JSON格式输出
+python -m timeqa_agent.retriever_cli -g data/timeqa/graph/test.json get-chunks "doc-00000-chunk-0007-event-0018" --chunks data/timeqa/chunk/test.json --json
+
+# 详细输出（显示完整chunk内容）
+python -m timeqa_agent.retriever_cli -g data/timeqa/graph/test.json get-chunks "John" --chunks data/timeqa/chunk/test.json -v
+```
+
+**交互式模式**：
+
+```bash
+python -m timeqa_agent.retriever_cli -g data/timeqa/graph/test.json
+
+> chunks-path data/timeqa/chunk/test.json
+chunks路径设置为: data/timeqa/chunk/test.json
+
+> get-chunks John career
+查询 'John career' 找到 3 个chunk:
+
+--- Chunk 1 ---
+  ID: doc-00000-chunk-0001
+  文档: John Smith Biography (doc-00000)
+  内容: John Smith was born in 1980. He graduated from MIT in 2002...
+
+--- Chunk 2 ---
+  ID: doc-00000-chunk-0002
+  文档: John Smith Biography (doc-00000)
+  内容: After graduation, John joined Google in 2003...
+```
+
+#### 2. 获取chunk的前后上下文
+
+**命令行使用**：
+
+```bash
+# 获取指定chunk的前后各2个chunk
+python -m timeqa_agent.retriever_cli -g data/timeqa/graph/test.json surrounding "doc-00000-chunk-0005" --chunks data/timeqa/chunk/test.json --before 2 --after 2
+
+# 检索事件并获取其chunk的前后上下文
+python -m timeqa_agent.retriever_cli -g data/timeqa/graph/test.json surrounding-event "John career" --chunks data/timeqa/chunk/test.json --before 1 --after 1
+
+# JSON格式输出
+python -m timeqa_agent.retriever_cli -g data/timeqa/graph/test.json surrounding "doc-00000-chunk-0005" --chunks data/timeqa/chunk/test.json --json
+
+# 详细输出（显示完整内容）
+python -m timeqa_agent.retriever_cli -g data/timeqa/graph/test.json surrounding-event "John" --chunks data/timeqa/chunk/test.json -v
+```
+
+**交互式模式**：
+
+```bash
+python -m timeqa_agent.retriever_cli -g data/timeqa/graph/test.json
+
+> chunks-path data/timeqa/chunk/test.json
+chunks路径设置为: data/timeqa/chunk/test.json
+
+> before 2
+前面chunk数量设置为: 2
+
+> after 2
+后面chunk数量设置为: 2
+
+> surrounding doc-00000-chunk-0005
+Chunk 'doc-00000-chunk-0005' 的前后上下文:
+文档: doc-00000, 当前索引: 5
+共 5 个chunks
+
+前面 2 个chunks:
+  [doc-00000-chunk-0003]
+  In 1998, John started his undergraduate studies at MIT...
+
+  [doc-00000-chunk-0004]
+  During his time at MIT, he focused on computer science...
+
+当前chunk:
+  [doc-00000-chunk-0005]
+  After graduation in 2002, John joined Google as a software engineer...
+
+后面 2 个chunks:
+  [doc-00000-chunk-0006]
+  At Google, he worked on search infrastructure...
+
+  [doc-00000-chunk-0007]
+  In 2010, John was promoted to senior engineer...
+
+> surrounding-event John career
+查询 'John career' 找到 2 个事件的上下文:
+
+============================================================
+事件 1: John joined Google as a software engineer
+事件ID: evt-00042
+Chunk索引: 5 (共 5 个chunks)
+============================================================
+
+前面 2 个chunks:
+  - In 1998, John started his undergraduate studies...
+  - During his time at MIT, he focused on...
+
+当前chunk (包含此事件):
+  ★ After graduation in 2002, John joined Google as a software engineer...
+
+后面 2 个chunks:
+  - At Google, he worked on search infrastructure...
+  - In 2010, John was promoted to senior engineer...
+```
+
+**功能说明**：
+
+1. **get-chunks**: 检索事件并获取对应的chunks
+   - 自动去重：多个事件可能来自同一个chunk，默认会自动去重
+   - 支持多种存储格式：JSON文件（列表或字典格式）、内存字典
+
+2. **surrounding**: 获取指定chunk的前后上下文
+   - 按文档顺序获取前后chunk
+   - 自动处理边界情况（文档开头/结尾）
+   - 如果中间chunk缺失会停止查找
+
+3. **surrounding-event**: 检索事件并获取其chunk的前后上下文
+   - 结合事件检索和上下文获取
+   - 显示事件所在chunk及其前后文
+   - 便于理解事件的完整背景
+
+**支持的参数**：
+
+- `--before N`: 获取前面N个chunk（默认1）
+- `--after N`: 获取后面N个chunk（默认1）
+- `--chunks`: chunks数据文件路径
+- `-v/--verbose`: 显示完整chunk内容
+- `--json`: JSON格式输出
+
+**使用场景**：
+
+- **验证事件抽取的准确性**：查看原始文本上下文
+- **理解事件的完整背景**：获取周围的相关信息
+- **时间线分析**：查看事件前后发生了什么
+- **调试和分析**：追溯事件的来源文档和位置
+- **上下文理解**：获取chunk的前后文以理解完整语境
+
+
+
 ### 检索器命令行参数
 
 | 参数 | 简写 | 说明 | 默认值 |
@@ -236,6 +396,9 @@ python -m timeqa_agent.retriever_cli -g data/timeqa/graph/test.json search "John
 | --k1 | | 三层递进检索：第一层实体数量 | 配置值 |
 | --k2 | | 三层递进检索：第三层时间线数量 | 配置值 |
 | --k3 | | 三层递进检索：第三层事件数量 | 配置值 |
+| --chunks | | chunks数据文件路径（用于get-chunks/surrounding命令） | None |
+| --before | | 获取前面N个chunk（用于surrounding命令） | 1 |
+| --after | | 获取后面N个chunk（用于surrounding命令） | 1 |
 | --json | | JSON 格式输出 | false |
 | --verbose | -v | 详细输出 | false |
 | --no-semantic | | 禁用语义检索 | false |
@@ -252,6 +415,12 @@ python -m timeqa_agent.retriever_cli -g data/timeqa/graph/test.json search "John
 | hierarchical \<query\> | 三层递进检索 |
 | hierarchical-details \<query\> | 三层递进检索（含中间层信息） |
 | entity \<name\> \<query\> | 带实体上下文的检索 |
+| get-chunks \<query\> | 检索事件并获取对应chunks（需先设置chunks_path） |
+| surrounding \<chunk_id\> | 获取指定chunk的前后上下文 |
+| surrounding-event \<query\> | 检索事件并获取chunk前后上下文 |
+| chunks-path \<path\> | 设置chunks数据文件路径 |
+| before \<n\> | 设置获取前面N个chunk（默认1） |
+| after \<n\> | 设置获取后面N个chunk（默认1） |
 | type \<entity\|event\|timeline\|all\> | 设置目标类型过滤 |
 | topk \<n\> | 设置返回数量 |
 | k1 \<n\> | 设置三层递进检索实体数量 |
@@ -414,6 +583,50 @@ queries = parser.generate_retrieval_queries("Where did John work?")
 print(queries.entity_query)
 print(queries.timeline_query)
 print(queries.event_queries)
+
+# 从检索结果溯源到原始chunks
+from timeqa_agent.retrievers import HybridRetriever
+
+retriever = HybridRetriever(graph_store, embed_fn=embed_fn)
+events = retriever.retrieve("John career", target_type="event", top_k=5)
+
+# 获取单个事件对应的chunk信息
+chunk_info = retriever.get_chunk_info_by_event(events[0])
+print(f"Chunk ID: {chunk_info['chunk_id']}")
+print(f"Document: {chunk_info['doc_title']}")
+
+# 获取完整的chunk数据（包括内容）
+chunks_file = "data/timeqa/chunk/test.json"
+chunk_data = retriever.get_chunk_by_event(events[0], chunks_file)
+print(f"Chunk内容: {chunk_data['content']}")
+
+# 批量获取多个事件对应的chunks（自动去重）
+all_chunks = retriever.get_chunks_for_events(events, chunks_file, deduplicate=True)
+print(f"检索到 {len(events)} 个事件，来自 {len(all_chunks)} 个不同的chunks")
+
+# 获取chunk的前后上下文
+chunk_id = "doc-00000-chunk-0005"
+context = retriever.get_surrounding_chunks(chunk_id, chunks_file, before=2, after=2)
+print(f"前面 {len(context['before'])} 个chunks, 后面 {len(context['after'])} 个chunks")
+print(f"当前chunk内容: {context['current']['content'][:100]}")
+
+# 从事件获取chunk及其前后上下文
+event = events[0]
+context = retriever.get_surrounding_chunks_by_event(event, chunks_file, before=2, after=2)
+print(f"事件所在chunk: {context['current']['chunk_id']}")
+print(f"前后文共 {context['total_chunks']} 个chunks")
+for chunk in context['before']:
+    print(f"  前: {chunk['content'][:50]}...")
+print(f"  当前: {context['current']['content'][:50]}...")
+for chunk in context['after']:
+    print(f"  后: {chunk['content'][:50]}...")
+
+# 也可以使用内存中的chunks字典
+chunks_dict = {
+    "chunk-001": {"chunk_id": "chunk-001", "content": "...", "doc_id": "doc-001"},
+    "chunk-002": {"chunk_id": "chunk-002", "content": "...", "doc_id": "doc-001"},
+}
+chunk_data = retriever.get_chunk_by_event(events[0], chunks_dict)
 ```
 
 ## 配置
