@@ -1,13 +1,13 @@
 {
   "chunk": {
-    "strategy": "sentence",
+    "strategy": "fixed_size",
     "chunk_size": 1200,
     "chunk_overlap": 100,
     "max_sentences": 10,
     "sentence_overlap": 2,
     "min_chunk_size": 500,
     "max_chunk_size": 2000,
-    "preserve_sentences": true
+    "preserve_sentences": false
   },
   "extractor": {
     "model": "deepseek-chat",
@@ -15,8 +15,8 @@
     "temperature": 0,
     "max_retries": 3,
     "timeout": 180,
-    "batch_size": 2,
-    "enable_multi_round": true,
+    "batch_size": 1,
+    "enable_multi_round": false,
     "max_rounds": 2,
     "review_temperature": 0.0,
     "prior_events_context_mode": "full",
@@ -38,7 +38,7 @@
     "embed_base_url": "https://api.deepseek.com/v1",
     "embed_batch_size": 100,
     "similarity_threshold": 0.8,
-    "canonical_name_weight": 2.0
+    "canonical_name_weight": 10.0
   },
   "timeline": {
     "model": "deepseek-chat",

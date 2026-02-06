@@ -649,7 +649,7 @@ chunk_data = retriever.get_chunk_by_event(events[0], chunks_dict)
     "chunk_size": 1500,            // 目标分块大小（字符数）。建议 1000-2000
     "chunk_overlap": 100,          // 分块重叠大小。建议 chunk_size 的 5-10%
     "max_sentences": 10,           // 每块最大句子数（sentence 策略专用）
-    "min_chunk_size": 500,         // 最小分块大小（sentence 策略专用）
+    "min_chunk_size": 500,         // 最小分块大小（fixed_size 和 sentence 策略都适用）
     "max_chunk_size": 2000,        // 最大分块大小
     "preserve_sentences": true     // 是否保持句子完整性（fixed_size 策略专用）
   }
@@ -657,7 +657,8 @@ chunk_data = retriever.get_chunk_by_event(events[0], chunks_dict)
 ```
 
 **策略说明**：
-- `fixed_size`：按固定字符数分块，使用 chunk_size、chunk_overlap、preserve_sentences
+- `fixed_size`：按固定字符数分块，使用 chunk_size、chunk_overlap、preserve_sentences、min_chunk_size
+  - 当最后一个分块的大小小于 `min_chunk_size` 时，会自动合并到上一个分块
 - `sentence`：按句子边界分块，使用 max_sentences、min_chunk_size、max_chunk_size
 
 **建议**：

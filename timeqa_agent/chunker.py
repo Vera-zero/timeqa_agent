@@ -142,9 +142,10 @@ class DocumentChunker:
             return chunks
         
         start = 0
+        end = 0
         chunk_index = 0
         
-        while start < len(content):
+        while end < len(content):
             end = start + chunk_size
             
             if end >= len(content):
@@ -179,12 +180,40 @@ class DocumentChunker:
                     metadata=metadata or {},
                 ))
                 chunk_index += 1
-            
+            print (f"Created chunk {chunk_id} with size {len(chunk_content)} chars (start: {start}, end: {end})")
             # 下一个分块的起始位置（考虑重叠）
             start = end - overlap
             if start <= chunks[-1].start_char if chunks else 0:
                 start = end  # 避免无限循环
-        
+
+
+        # 处理最后一个分块：如果太小，合并到上一个分块
+        if len(chunks) > 1 and len(chunks[-1].content) < self.config.min_chunk_size:
+            print(f"最后一个分块大小小于最小限制，进行合并")
+            last_chunk = chunks[-1]
+            prev_chunk = chunks[-2]
+            start = prev_chunk.start_char
+            end = last_chunk.end_char
+            chunk_content = content[start:end].strip()
+            # 合并内容
+            merged_content = prev_chunk.content + ' ' + last_chunk.content
+
+            # 更新倒数第二个分块为合并后的分块
+            chunks[-2] = Chunk(
+                chunk_id=prev_chunk.chunk_id,
+                content=chunk_content,
+                doc_id=doc_id,
+                doc_title=doc_title,
+                source_idx=source_idx,
+                chunk_index=prev_chunk.chunk_index,
+                start_char=prev_chunk.start_char,
+                end_char=last_chunk.end_char,
+                strategy=ChunkStrategy.FIXED_SIZE,
+                metadata=metadata or {},
+            )
+            # 删除最后一个分块
+            chunks.pop()
+
         return chunks
     
     def _split_sentences(self, text: str) -> List[str]:
