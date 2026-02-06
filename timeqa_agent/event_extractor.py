@@ -634,14 +634,121 @@ class EventExtractor:
                 continue
         
         return events
-    
-    def extract_from_chunks(
+
+    def _group_chunks_by_document(
+        self,
+        chunks: List[Chunk]
+    ) -> Dict[str, List[Chunk]]:
+        """
+        按文档ID分组分块
+
+        Args:
+            chunks: 分块列表
+
+        Returns:
+            {doc_id: [chunk0, chunk1, ...]} (按chunk_index排序)
+        """
+        from collections import defaultdict
+
+        doc_chunks = defaultdict(list)
+        for chunk in chunks:
+            doc_chunks[chunk.doc_id].append(chunk)
+
+        # 按chunk_index排序，确保顺序处理
+        for doc_id in doc_chunks:
+            doc_chunks[doc_id].sort(key=lambda c: c.chunk_index)
+
+        return dict(doc_chunks)
+
+    def _create_batches(
+        self,
+        chunks_by_doc: Dict[str, List[Chunk]]
+    ) -> List[List[Chunk]]:
+        """
+        创建批次，确保每批包含不同文档的分块
+
+        策略：按分块索引（chunk_index）分组
+        - batch[0]: 所有文档的第0个分块
+        - batch[1]: 所有文档的第1个分块
+        - ...
+
+        Args:
+            chunks_by_doc: 按文档分组的分块 {doc_id: [chunks]}
+
+        Returns:
+            [[batch0_chunks], [batch1_chunks], ...]
+        """
+        # 找到最大分块索引
+        max_chunk_index = max(
+            len(chunks) for chunks in chunks_by_doc.values()
+        ) if chunks_by_doc else 0
+
+        batches = []
+        for chunk_idx in range(max_chunk_index):
+            batch = []
+            for doc_id, doc_chunks in chunks_by_doc.items():
+                if chunk_idx < len(doc_chunks):
+                    batch.append(doc_chunks[chunk_idx])
+
+            if batch:
+                batches.append(batch)
+
+        return batches
+
+    def _get_prior_events_for_doc(
+        self,
+        chunk_index: int,
+        doc_extracted_events: Dict[int, List[TimeEvent]],
+    ) -> List[TimeEvent]:
+        """
+        获取同一文档内的前置事件
+
+        Args:
+            chunk_index: 当前分块在文档内的索引
+            doc_extracted_events: 该文档已抽取的事件 {chunk_index: events}
+
+        Returns:
+            前置事件列表
+        """
+        if self.config.prior_events_context_mode == PriorEventsContextMode.NONE:
+            return []
+
+        if chunk_index == 0:
+            return []  # 文档的第一个分块没有前置事件
+
+        prior_events = []
+
+        if self.config.prior_events_context_mode == PriorEventsContextMode.FULL:
+            # 全量模式：所有前置分块的事件
+            for i in range(chunk_index):
+                if i in doc_extracted_events:
+                    prior_events.extend(doc_extracted_events[i])
+
+        elif self.config.prior_events_context_mode == PriorEventsContextMode.SLIDING_WINDOW:
+            # 滑动窗口模式
+            window_size = self.config.prior_events_window_size
+
+            # 始终包含第一个分块
+            if 0 in doc_extracted_events:
+                prior_events.extend(doc_extracted_events[0])
+
+            # 添加窗口内的分块
+            start_idx = max(1, chunk_index - window_size)
+            for i in range(start_idx, chunk_index):
+                if i in doc_extracted_events:
+                    prior_events.extend(doc_extracted_events[i])
+
+        return prior_events
+
+    def _extract_from_chunks_sequential(
         self,
         chunks: List[Chunk],
         progress_callback: Optional[callable] = None,
     ) -> List[TimeEvent]:
         """
-        从多个分块中抽取时间事件
+        顺序处理分块（batch_size=1的兼容模式）
+
+        这是当前的实现逻辑，保持向后兼容
 
         Args:
             chunks: 分块列表
@@ -653,27 +760,141 @@ class EventExtractor:
         all_events = []
         total = len(chunks)
 
-        # 存储每个分块的已抽取事件 {chunk_index: events}
-        extracted_events_by_chunk: Dict[int, List[TimeEvent]] = {}
+        # 按文档分组存储已抽取事件
+        extracted_events_by_doc: Dict[str, Dict[int, List[TimeEvent]]] = {}
 
         for i, chunk in enumerate(chunks):
-            # 获取前置事件上下文
-            prior_events = self._get_prior_events(i, extracted_events_by_chunk)
+            # 初始化文档的事件字典
+            if chunk.doc_id not in extracted_events_by_doc:
+                extracted_events_by_doc[chunk.doc_id] = {}
+
+            # 获取前置事件（同一文档内）
+            prior_events = self._get_prior_events_for_doc(
+                chunk.chunk_index,
+                extracted_events_by_doc[chunk.doc_id]
+            )
 
             if prior_events:
-                print(f"Chunk {i}: 使用 {len(prior_events)} 个前置事件作为上下文")
+                print(f"Chunk {i} ({chunk.chunk_id}): 使用 {len(prior_events)} 个前置事件作为上下文")
 
-            # 抽取当前分块的事件
+            # 抽取当前分块
             events = self.extract_from_chunk(chunk, prior_events)
 
-            # 存储当前分块的事件
-            extracted_events_by_chunk[i] = events
+            # 存储结果
+            extracted_events_by_doc[chunk.doc_id][chunk.chunk_index] = events
             all_events.extend(events)
 
             if progress_callback:
                 progress_callback(i + 1, total)
 
         return all_events
+
+    def _process_batch(
+        self,
+        batch: List[Chunk],
+        extracted_events_by_doc: Dict[str, Dict[int, List[TimeEvent]]]
+    ) -> List[List[TimeEvent]]:
+        """
+        处理单个批次中的所有分块
+
+        Args:
+            batch: 当前批次的分块列表（来自不同文档）
+            extracted_events_by_doc: 已抽取事件的状态字典
+
+        Returns:
+            每个分块对应的事件列表
+        """
+        results = []
+        for chunk in batch:
+            # 获取该文档的前置事件
+            prior_events = self._get_prior_events_for_doc(
+                chunk.chunk_index,
+                extracted_events_by_doc[chunk.doc_id]
+            )
+
+            if prior_events:
+                print(f"  {chunk.chunk_id}: 使用 {len(prior_events)} 个前置事件作为上下文")
+
+            # 抽取事件
+            events = self.extract_from_chunk(chunk, prior_events)
+            results.append(events)
+
+        return results
+
+    def _extract_from_chunks_batched(
+        self,
+        chunks: List[Chunk],
+        progress_callback: Optional[callable] = None,
+    ) -> List[TimeEvent]:
+        """
+        批处理模式抽取事件
+
+        按文档索引分批，确保每批包含不同文档的分块
+
+        Args:
+            chunks: 分块列表
+            progress_callback: 进度回调函数 (current, total)
+
+        Returns:
+            所有时间事件列表
+        """
+        # 1. 按文档分组
+        chunks_by_doc = self._group_chunks_by_document(chunks)
+
+        # 2. 创建批次
+        batches = self._create_batches(chunks_by_doc)
+
+        # 3. 初始化状态
+        all_events = []
+        total_chunks = len(chunks)
+        processed_chunks = 0
+
+        # 按文档存储已抽取事件: {doc_id: {chunk_index: events}}
+        extracted_events_by_doc: Dict[str, Dict[int, List[TimeEvent]]] = {
+            doc_id: {} for doc_id in chunks_by_doc.keys()
+        }
+
+        # 4. 批次处理
+        print(f"批处理模式: {len(batches)} 个批次, batch_size={self.config.batch_size}")
+
+        for batch_idx, batch in enumerate(batches):
+            print(f"\n=== 批次 {batch_idx + 1}/{len(batches)} ({len(batch)} 个分块) ===")
+
+            # 批次内处理
+            batch_results = self._process_batch(batch, extracted_events_by_doc)
+
+            # 更新状态
+            for chunk, events in zip(batch, batch_results):
+                extracted_events_by_doc[chunk.doc_id][chunk.chunk_index] = events
+                all_events.extend(events)
+
+            processed_chunks += len(batch)
+            if progress_callback:
+                progress_callback(processed_chunks, total_chunks)
+
+        return all_events
+
+    def extract_from_chunks(
+        self,
+        chunks: List[Chunk],
+        progress_callback: Optional[callable] = None,
+    ) -> List[TimeEvent]:
+        """
+        从多个分块中抽取时间事件（支持文档级批处理）
+
+        Args:
+            chunks: 分块列表
+            progress_callback: 进度回调函数 (current, total)
+
+        Returns:
+            所有时间事件列表
+        """
+        if self.config.batch_size <= 1:
+            # 兼容模式：batch_size=1时使用顺序处理
+            return self._extract_from_chunks_sequential(chunks, progress_callback)
+        else:
+            # 批处理模式
+            return self._extract_from_chunks_batched(chunks, progress_callback)
     
     def extract_from_document(
         self,

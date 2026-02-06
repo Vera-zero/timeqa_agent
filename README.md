@@ -668,7 +668,7 @@ chunk_data = retriever.get_chunk_by_event(events[0], chunks_dict)
     "temperature": 0.1,                 // 生成温度。建议 0.1-0.3，低温度保证抽取一致性
     "max_retries": 3,                   // 最大重试次数
     "timeout": 180,                     // 请求超时（秒）。复杂文档建议 180-300
-    "batch_size": 1,                    // 批处理大小。并发抽取数量
+    "batch_size": 1,                    // 文档级批处理大小（batch_size=1顺序处理，>1批处理模式）
     "include_implicit_time": true,      // 是否抽取隐式时间（如"去年"、"上个月"）
     "enable_multi_round": true,         // 是否启用多轮抽取
     "max_rounds": 2,                    // 最大抽取轮数
@@ -677,6 +677,33 @@ chunk_data = retriever.get_chunk_by_event(events[0], chunks_dict)
     "prior_events_window_size": 3       // 滑动窗口大小（仅 sliding_window 模式有效）
   }
 }
+```
+
+**批处理配置说明**：
+
+`batch_size` 控制文档级并行处理能力。批处理策略确保同一文档的分块按顺序处理，同时允许不同文档的分块并行处理。
+
+| batch_size | 处理模式 | 说明 |
+|------------|----------|------|
+| 1 | 顺序模式（默认） | 逐个处理分块，向后兼容 |
+| >1 | 批处理模式 | 按文档索引分批，提高吞吐量 |
+
+**批处理原理**：
+- 同一批次包含来自**不同文档**的**相同索引**分块
+- 同一文档的分块**按顺序**处理，确保前置事件上下文正确
+- 支持所有前置事件上下文模式（none/full/sliding_window）
+
+**示例**（batch_size=3）：
+```
+输入文档分块:
+  doc0: [c0, c1, c2]
+  doc1: [c0, c1]
+  doc2: [c0]
+
+批处理执行:
+  批次1: [doc0-c0, doc1-c0, doc2-c0]  # 每个文档的第0个分块
+  批次2: [doc0-c1, doc1-c1]           # 每个文档的第1个分块
+  批次3: [doc0-c2]                    # 剩余分块
 ```
 
 **前置事件上下文说明**：
@@ -702,6 +729,8 @@ chunk_data = retriever.get_chunk_by_event(events[0], chunks_dict)
 - 长文档增加 timeout 避免超时
 - include_implicit_time 开启可捕获更多时间信息，但可能增加噪音
 - 传记类文档建议使用 `sliding_window` 模式，以便利用出生日期等关键时间锚点
+- 默认 `batch_size=1` 确保稳定性；API 限速宽松时可设置为 3-5 提高速度
+- 传记类长文档建议保持 `batch_size=1`，因为前置事件上下文很重要
 
 ### 事件过滤配置 (event_filter)
 

@@ -73,7 +73,7 @@ class ExtractorConfig:
     timeout: int = 180
 
     # 抽取配置
-    batch_size: int = 1            # 每次处理的分块数（目前只支持1）
+    batch_size: int = 1            # 文档级批处理大小（batch_size=1顺序处理，>1批处理模式）
     include_implicit_time: bool = True  # 是否包含隐式时间引用
 
     # 多轮抽取配置
