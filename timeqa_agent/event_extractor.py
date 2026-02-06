@@ -126,14 +126,15 @@ You are an expert in temporal event extraction. Your task is to comprehensively 
 ## Extraction Rules
 1. **Completeness**: You must extract ALL events containing temporal information from the text. Do not miss any.
 2. **Accuracy**: Preserve the original sentence and accurately identify time expressions.
-3. **Entity Recognition**: Identify all entities involved in the event with their canonical names and descriptions.
-   - **For singular entities**: Extract as usual.
-   - **For plural/compound entities** (e.g., "they", "their", "the couple", "both", etc.):
-     - First, identify the compound entity as a whole (e.g., "They").
-     - Then, identify **each individual entity** that constitutes the compound entity.
-     - Use the naming pattern: For the compound entity, use its original name (e.g., "They"). For individual parts, use the pattern "[compound_entity_name]_part" (e.g., "They_part").
-     - Provide canonical names and descriptions for **each** individual entity based on context.
-4. **Time Classification**:
+3. **Event Description with Time**: The event_description MUST include temporal information:
+   - When time_start and/or time_end are available (not null), use them in the description with the same granularity (e.g., if time_start is "1961", use "1961" or "in 1961" in the description; if it's "1961-03-15", use the full date).
+   - Only when both time_start and time_end are null, use the time_expression directly in the description.
+   - The description should be concise but must clearly indicate when the event occurred.
+4. **Entity Recognition**: Identify all entities involved in the event with their canonical names and descriptions.
+   - **Pronoun Replacement**: When the text contains pronouns (he, she, they, etc.) referring to entities, you MUST use the entity's canonical_name instead of the pronoun in the "name" field. Do NOT use pronouns like "he", "she", "they" as entity names.
+   - Provide the standardized/full name as canonical_name and a clear description based on context.
+   - Example: If the text says "he was made a Queen's Counsel", and "he" refers to "John Smith", then use "John Smith" as the name, not "he".
+5. **Time Classification**:
    - point: Events occurring at a specific point in time, e.g., "In 1959 he was made a Queen's Counsel"
    - range: Events spanning a period of time, e.g., "served as Chief of the Defence Staff from 1961 to 1967"
 
@@ -144,28 +145,18 @@ Output a JSON object containing an events array:
   "events": [
     {
       "original_sentence": "The exact sentence copied from the text",
-      "event_description": "A concise description of the event",
+      "event_description": "A concise description that MUST include the temporal information (use time_start/time_end format when available, e.g., 'John Smith was made a Queen's Counsel in 1959' or 'served as Chief of Defence Staff from 1961 to 1967')",
       "entities": [
         {
-          "name": "The entity name as it appears in the text (e.g., 'They')",
-          "canonical_name": "The standardized/full name of the entity (e.g., 'Arnulf Øverland and Bartholine Eufemia Leganger')",
-          "description": "A brief description of the entity based on context (e.g., 'Married couple who divorced')"
-        },
-        {
-          "name": "They_part",
-          "canonical_name": "Arnulf Øverland",
-          "description": "One of the married couple who divorced"
-        },
-        {
-          "name": "They_part",
-          "canonical_name": "Bartholine Eufemia Leganger",
-          "description": "One of the married couple who divorced"
+          "name": "John Smith",
+          "canonical_name": "John Smith",
+          "description": "A brief description of the entity based on context"
         }
       ],
       "time_type": "point or range",
       "time_start": "Start time in standardized format (e.g., 1961, 1961-03, 1961-03-15)",
       "time_end": "End time (only for range type, null for point type)",
-      "time_expression": "Original time expression from text (e.g., from 1961 to 1967)"
+      "time_expression": "Original time expression from text (e.g., in 1959, from 1961 to 1967)"
     }
   ]
 }
@@ -174,10 +165,9 @@ Output a JSON object containing an events array:
 ## Important Notes
 1. If there are no temporal events in the text, return an empty array: {"events": []}
 2. A single sentence may contain multiple temporal events; extract them separately
-3. Preserve the original form of time expressions
+3. Preserve the original form of time expressions in the time_expression field
 4. Always provide clear canonical names and descriptions to help identify entities
-5. **For plural/compound entities**: You MUST identify each constituent individual entity. The `entities` array should contain the compound entity entry PLUS entries for each individual part.
-6. If the context does not provide enough information to identify individual entities within a compound reference, make reasonable inferences based on available information and note any uncertainties in the description.
+5. **Critical**: Use canonical names (not pronouns) for entity names, and ensure event_description includes temporal information with appropriate granularity
 ```
 """
 
@@ -228,14 +218,15 @@ You are an expert reviewer for temporal event extraction. Your task is to find a
 ## Extraction Rules
 1. **Completeness**: You must extract ALL events containing temporal information from the text. Do not miss any.
 2. **Accuracy**: Preserve the original sentence and accurately identify time expressions.
-3. **Entity Recognition**: Identify all entities involved in the event with their canonical names and descriptions.
-   - **For singular entities**: Extract as usual.
-   - **For plural/compound entities** (e.g., "they", "their", "the couple", "both", etc.):
-     - First, identify the compound entity as a whole (e.g., "They").
-     - Then, identify **each individual entity** that constitutes the compound entity.
-     - Use the naming pattern: For the compound entity, use its original name (e.g., "They"). For individual parts, use the pattern "[compound_entity_name]_part" (e.g., "They_part").
-     - Provide canonical names and descriptions for **each** individual entity based on context.
-4. **Time Classification**:
+3. **Event Description with Time**: The event_description MUST include temporal information:
+   - When time_start and/or time_end are available (not null), use them in the description with the same granularity (e.g., if time_start is "1961", use "1961" or "in 1961" in the description; if it's "1961-03-15", use the full date).
+   - Only when both time_start and time_end are null, use the time_expression directly in the description.
+   - The description should be concise but must clearly indicate when the event occurred.
+4. **Entity Recognition**: Identify all entities involved in the event with their canonical names and descriptions.
+   - **Pronoun Replacement**: When the text contains pronouns (he, she, they, etc.) referring to entities, you MUST use the entity's canonical_name instead of the pronoun in the "name" field. Do NOT use pronouns like "he", "she", "they" as entity names.
+   - Provide the standardized/full name as canonical_name and a clear description based on context.
+   - Example: If the text says "he was made a Queen's Counsel", and "he" refers to "John Smith", then use "John Smith" as the name, not "he".
+5. **Time Classification**:
    - point: Events occurring at a specific point in time, e.g., "In 1959 he was made a Queen's Counsel"
    - range: Events spanning a period of time, e.g., "served as Chief of the Defence Staff from 1961 to 1967"
 
@@ -246,28 +237,18 @@ Output only NEW events in the same JSON format as bellow. If no additional event
   "events": [
     {
       "original_sentence": "The exact sentence copied from the text",
-      "event_description": "A concise description of the event",
+      "event_description": "A concise description that MUST include the temporal information (use time_start/time_end format when available, e.g., 'John Smith was made a Queen's Counsel in 1959' or 'served as Chief of Defence Staff from 1961 to 1967')",
       "entities": [
         {
-          "name": "The entity name as it appears in the text (e.g., 'They')",
-          "canonical_name": "The standardized/full name of the entity (e.g., 'Arnulf Øverland and Bartholine Eufemia Leganger')",
-          "description": "A brief description of the entity based on context (e.g., 'Married couple who divorced')"
-        },
-        {
-          "name": "They_part",
-          "canonical_name": "Arnulf Øverland",
-          "description": "One of the married couple who divorced"
-        },
-        {
-          "name": "They_part",
-          "canonical_name": "Bartholine Eufemia Leganger",
-          "description": "One of the married couple who divorced"
+          "name": "John Smith",
+          "canonical_name": "John Smith",
+          "description": "A brief description of the entity based on context"
         }
       ],
       "time_type": "point or range",
       "time_start": "Start time in standardized format (e.g., 1961, 1961-03, 1961-03-15)",
       "time_end": "End time (only for range type, null for point type)",
-      "time_expression": "Original time expression from text (e.g., from 1961 to 1967)"
+      "time_expression": "Original time expression from text (e.g., in 1959, from 1961 to 1967)"
     }
   ]
 }
@@ -275,10 +256,9 @@ Output only NEW events in the same JSON format as bellow. If no additional event
 ## Important Notes
 1. If there are no temporal events in the text, return an empty array: {"events": []}
 2. A single sentence may contain multiple temporal events; extract them separately
-3. Preserve the original form of time expressions
+3. Preserve the original form of time expressions in the time_expression field
 4. Always provide clear canonical names and descriptions to help identify entities
-5. **For plural/compound entities**: You MUST identify each constituent individual entity. The `entities` array should contain the compound entity entry PLUS entries for each individual part.
-6. If the context does not provide enough information to identify individual entities within a compound reference, make reasonable inferences based on available information and note any uncertainties in the description.
+5. **Critical**: Use canonical names (not pronouns) for entity names, and ensure event_description includes temporal information with appropriate granularity
 
 """
 
