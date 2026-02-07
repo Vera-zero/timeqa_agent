@@ -45,7 +45,12 @@
     "base_url": "https://api.deepseek.com/chat/completions",
     "temperature": 0,
     "max_retries": 3,
-    "timeout": 180
+    "timeout": 180,
+    "enable_iterative": true,
+    "iterative_batch_size": 20,
+    "include_timeline_context": true,
+    "max_context_timelines": 50,
+    "sort_events_by_time": true
   },
   "graph_store": {
     "store_original_sentence": true,

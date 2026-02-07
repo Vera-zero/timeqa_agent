@@ -173,6 +173,13 @@ class TimelineConfig:
     max_retries: int = 3
     timeout: int = 180
 
+    # 迭代式抽取配置
+    enable_iterative: bool = False              # 是否启用迭代抽取
+    iterative_batch_size: int = 20              # 每批事件数量
+    include_timeline_context: bool = True       # 是否在提示词中包含已有时间线
+    max_context_timelines: int = 50             # 最多包含多少条时间线在上下文中
+    sort_events_by_time: bool = True            # 分批前是否按时间排序
+
     def to_dict(self) -> Dict[str, Any]:
         """转换为字典"""
         return asdict(self)

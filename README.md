@@ -832,10 +832,51 @@ python -m timeqa_agent.event_validator -i data/timeqa/event/test.json -o data/ti
     "base_url": "http://...",           // API 端点
     "temperature": 0.1,                 // 生成温度
     "max_retries": 3,                   // 最大重试次数
-    "timeout": 180                      // 请求超时（秒）
+    "timeout": 180,                     // 请求超时（秒）
+
+    // 迭代式抽取配置
+    "enable_iterative": false,          // 是否启用迭代抽取
+    "iterative_batch_size": 20,         // 每批事件数量
+    "include_timeline_context": true,   // 是否在提示词中包含已有时间线
+    "max_context_timelines": 50,        // 最多包含多少条时间线在上下文中
+    "sort_events_by_time": true         // 分批前是否按时间排序
   }
 }
 ```
+
+**迭代式抽取功能说明**：
+
+- **功能介绍**：迭代式抽取将实体的事件分批处理，而不是一次性处理所有事件。第一批正常进行时间线聚类，后续批次将已识别的时间线作为上下文，帮助 LLM 更好地将新事件分配到合适的时间线中。
+
+- **适用场景**：
+  - 实体拥有大量事件（如知名人物、大型组织）
+  - 希望改善时间线聚类的连贯性和准确性
+  - 需要控制单次 LLM 调用的上下文大小
+
+- **参数说明**：
+  - `enable_iterative`：是否启用迭代抽取（默认 false，保持向后兼容）
+  - `iterative_batch_size`：每批处理的事件数量（默认 20）
+    - 过小：API 调用次数增加，成本上升
+    - 过大：迭代效果减弱，接近单次抽取
+  - `include_timeline_context`：是否在提示词中包含已有时间线信息（默认 true）
+  - `max_context_timelines`：上下文中最多包含多少条时间线（默认 50，防止提示词过长）
+  - `sort_events_by_time`：分批前是否按时间排序事件（默认 true，保持时间连贯性）
+
+- **使用示例**：
+  ```bash
+  # 启用迭代抽取，每批 15 个事件
+  # 修改 configs/timeqa_config.json 中的配置：
+  # "enable_iterative": true,
+  # "iterative_batch_size": 15
+
+  python -m timeqa_agent.pipeline --split test --start timeline --end timeline
+  ```
+
+- **性能影响**：
+  - API 调用次数：从 1 次变为 `ceil(事件数 / batch_size)` 次
+  - 总处理时间：增加，但单次调用更快（上下文更小）
+  - 成本：与 API 调用次数成正比
+
 
 ### 图存储配置 (graph_store)
 
