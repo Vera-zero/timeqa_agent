@@ -2,7 +2,7 @@
 语义检索器
 
 基于向量嵌入的语义相似度检索
-支持 FAISS 向量索引（Flat / IVF / HNSW）
+支持 FAISS 向量索引（Flat / IVF ）
 """
 
 from __future__ import annotations
@@ -42,7 +42,6 @@ class VectorIndex:
     支持 FAISS 后端:
     - flat: 暴力搜索 (IndexFlatIP / IndexFlatL2)
     - ivf: 倒排索引 (IndexIVFFlat)
-    - hnsw: 近似最近邻 (IndexHNSWFlat)
     
     如果 FAISS 不可用，回退到 numpy 实现
     """
@@ -129,12 +128,7 @@ class VectorIndex:
             faiss_metric = faiss.METRIC_L2
         
         # 根据索引类型创建索引
-        if index_type == "hnsw":
-            # HNSW 索引
-            self._faiss_index = faiss.IndexHNSWFlat(dim, self.config.hnsw_m, faiss_metric)
-            self._faiss_index.hnsw.efConstruction = self.config.hnsw_ef_construction
-            self._faiss_index.hnsw.efSearch = self.config.hnsw_ef_search
-        elif index_type == "ivf" and n_vectors >= 100:
+        if index_type == "ivf" and n_vectors >= 100:
             # IVF 索引（需要足够的向量来训练）
             nlist = min(int(np.sqrt(n_vectors)), 100)  # 聚类数
             quantizer = faiss.IndexFlatIP(dim) if faiss_metric == faiss.METRIC_INNER_PRODUCT else faiss.IndexFlatL2(dim)

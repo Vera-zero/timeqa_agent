@@ -392,7 +392,6 @@ class RetrieverConfig:
     embedding_dim: int = 768                 # 嵌入维度
     embed_batch_size: int = 32               # 批量嵌入大小
     similarity_threshold: float = 0.5        # 语义相似度阈值
-    cache_embeddings: bool = True            # 是否缓存嵌入
 
     # ========== 关键词检索配置 ==========
     # 关键词检索算法类型
@@ -412,9 +411,6 @@ class RetrieverConfig:
     # 向量索引参数
     vector_index_type: str = "flat"          # 索引类型: flat, hnsw
     vector_metric: str = "cosine"            # 距离度量: cosine, l2, ip
-    hnsw_m: int = 16                         # HNSW M 参数
-    hnsw_ef_construction: int = 200          # HNSW 构建时的 ef
-    hnsw_ef_search: int = 50                 # HNSW 搜索时的 ef
 
     # ========== 混合检索配置 ==========
     # 混合检索参数

@@ -1322,11 +1322,8 @@ python -m timeqa_agent.event_validator -i data/timeqa/event/test.json -o data/ti
     "min_keyword_length": 2,        // 最小关键词长度
 
     // === 向量索引参数 ===
-    "vector_index_type": "flat",    // 索引类型，仅 flat 生效，hnsw 未实现
+    "vector_index_type": "flat",    // 索引类型，仅 flat 生效
     "vector_metric": "cosine",      // 距离度量: cosine, l2, ip
-    "hnsw_m": 16,                   // [未实现] HNSW M 参数
-    "hnsw_ef_construction": 200,    // [未实现] HNSW 构建参数
-    "hnsw_ef_search": 50,           // [未实现] HNSW 搜索参数
 
     // === 混合检索参数 ===
     "keyword_weight": 0.3,          // 关键词检索权重
@@ -1334,8 +1331,7 @@ python -m timeqa_agent.event_validator -i data/timeqa/event/test.json -o data/ti
     "fusion_mode": "rrf",           // 融合模式: rrf, weighted_sum, max_score, interleave
     "rrf_k": 60.0,                  // RRF 参数 k
     "enable_keyword": true,         // 启用关键词检索
-    "enable_semantic": true,        // 启用语义检索
-    "cache_embeddings": true        // [未实现] 缓存嵌入向量
+    "enable_semantic": true         // 启用语义检索
   }
 }
 ```
@@ -1350,9 +1346,7 @@ python -m timeqa_agent.event_validator -i data/timeqa/event/test.json -o data/ti
 **实现状态**：
 | 参数 | 状态 | 说明 |
 |------|------|------|
-| vector_index_type | ⚠️ 部分实现 | 仅 `flat` 生效，`hnsw` 索引未实现 |
-| hnsw_* | ❌ 未实现 | HNSW 相关参数暂未使用 |
-| cache_embeddings | ❌ 未实现 | 嵌入缓存功能暂未使用 |
+| vector_index_type | ⚠️ 部分实现 | 仅 `flat` 生效，
 | 其他参数 | ✅ 已实现 | 正常工作 |
 
 **检索器建议**：
