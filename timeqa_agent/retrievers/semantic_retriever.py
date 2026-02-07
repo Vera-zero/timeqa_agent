@@ -656,7 +656,7 @@ class SemanticRetriever(BaseRetriever):
             entity_names = json.loads(entity_names_str) if entity_names_str else []
             
             # 拼接文本用于嵌入
-            text = "|".join([event_description, time_expression, original_sentence] + entity_names)
+            text = "|".join([event_description,original_sentence])
             
             events_data.append({
                 "node_id": node_id,
