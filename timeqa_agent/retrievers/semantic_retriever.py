@@ -577,7 +577,7 @@ class SemanticRetriever(BaseRetriever):
             aliases = json.loads(aliases_str) if aliases_str else []
             
             # 拼接文本用于嵌入
-            text = " ".join([canonical_name, description] + aliases)
+            text = "|".join([canonical_name, description] + aliases)
             
             event_ids_str = data.get("source_event_ids", "[]")
             event_ids = json.loads(event_ids_str) if event_ids_str else []
@@ -628,7 +628,7 @@ class SemanticRetriever(BaseRetriever):
             entity_names = json.loads(entity_names_str) if entity_names_str else []
             
             # 拼接文本用于嵌入
-            text = " ".join([event_description, time_expression, original_sentence] + entity_names)
+            text = "|".join([event_description, time_expression, original_sentence] + entity_names)
             
             events_data.append({
                 "node_id": node_id,
@@ -680,8 +680,7 @@ class SemanticRetriever(BaseRetriever):
             entity_name = data.get("entity_canonical_name", "")
             
             # 拼接文本用于嵌入
-            text = " ".join([entity_name,timeline_name])
-            
+            text = "|".join([entity_name,timeline_name,description])
             event_ids_str = data.get("event_ids", "[]")
             event_ids = json.loads(event_ids_str) if event_ids_str else []
             
