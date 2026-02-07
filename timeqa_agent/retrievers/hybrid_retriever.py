@@ -32,47 +32,46 @@ class HybridRetriever(BaseRetriever):
     def __init__(
         self,
         graph_store: TimelineGraphStore,
+        config: RetrieverConfig,
         embed_fn: Optional[Callable[[List[str]], List[List[float]]]] = None,
-        config: Optional[RetrieverConfig] = None,
         index_dir: Optional[str] = None,
         auto_save: bool = True,
     ):
         """
         初始化混合检索器
-        
+
         Args:
             graph_store: 图存储
-            embed_fn: 嵌入函数（用于语义检索）
             config: 检索器配置
+            embed_fn: 嵌入函数（可选，如果不提供则根据 config 自动创建）
             index_dir: 索引缓存目录，设置后会自动加载/保存索引
             auto_save: 是否在首次构建索引后自动保存
         """
-        super().__init__(graph_store, config or RetrieverConfig())
-        
+        super().__init__(graph_store, config)
+
         # 初始化子检索器
         self._keyword_retriever: Optional[KeywordRetriever] = None
         self._semantic_retriever: Optional[SemanticRetriever] = None
-        
-        self._embed_fn = embed_fn
+
         self._index_dir = index_dir
         self._auto_save = auto_save
-        
+
         # 延迟初始化
-        self._init_retrievers()
-    
-    def _init_retrievers(self) -> None:
+        self._init_retrievers(embed_fn)
+
+    def _init_retrievers(self, embed_fn: Optional[Callable] = None) -> None:
         """初始化子检索器"""
         if self.config.enable_keyword:
             self._keyword_retriever = KeywordRetriever(
                 self.graph_store,
                 self.config
             )
-        
-        if self.config.enable_semantic and self._embed_fn:
+
+        if self.config.enable_semantic:
             self._semantic_retriever = SemanticRetriever(
                 self.graph_store,
-                self._embed_fn,
-                self.config,
+                config=self.config,
+                embed_fn=embed_fn,  # 如果为 None，SemanticRetriever 会根据 config 自动创建
                 index_dir=self._index_dir,
                 auto_save=self._auto_save,
             )
@@ -402,13 +401,13 @@ class HybridRetriever(BaseRetriever):
         embed_fn: Callable[[List[str]], List[List[float]]]
     ) -> None:
         """设置嵌入函数"""
-        self._embed_fn = embed_fn
-        
         if self.config.enable_semantic:
             self._semantic_retriever = SemanticRetriever(
                 self.graph_store,
-                embed_fn,
-                self.config
+                config=self.config,
+                embed_fn=embed_fn,
+                index_dir=self._index_dir,
+                auto_save=self._auto_save,
             )
     
     def build_indexes(self) -> None:

@@ -192,43 +192,90 @@ def print_hierarchical_results(results: HierarchicalRetrievalResults, query: str
 
 
 def create_embed_fn(config) -> Optional[Callable]:
-    """创建嵌入函数（优先使用本地BGE-M3模型，回退到API）"""
+    """根据配置文件创建嵌入函数
+
+    优先级：
+    1. 使用配置文件中指定的语义检索模型（retriever.semantic_model_type）
+    2. 如果本地模型不可用，尝试使用 API（回退选项）
+    """
     import os
-    
-    # 尝试使用本地BGE-M3模型
-    from .embeddings import create_local_embed_fn
-    
-    # 检查配置中是否有本地模型路径指定
-    local_model_path = getattr(config.disambiguator, 'local_embed_model_path', None)
-    embed_fn = create_local_embed_fn(local_model_path)
-    
-    if embed_fn:
-        print("✓ 已启用本地BGE-M3模型进行语义检索")
-        return embed_fn
-    
-    print("本地BGE-M3模型不可用，尝试使用API...")
-    
+    from .embeddings import create_embed_fn as create_embed_fn_from_config
+
+    # 从配置中获取模型参数
+    model_type = config.retriever.semantic_model_type
+    model_name = config.retriever.semantic_model_name
+    device = config.retriever.semantic_model_device
+
+    print(f"正在根据配置创建嵌入函数:")
+    print(f"  模型类型: {model_type}")
+    print(f"  模型名称/路径: {model_name}")
+    print(f"  设备: {device}")
+
+    # 尝试使用配置文件中指定的模型
+    try:
+        # 根据模型类型传递相应的参数
+        if model_type.lower() == "contriever":
+            embed_fn = create_embed_fn_from_config(
+                model_type=model_type,
+                model_name=model_name,
+                device=device,
+                normalize=config.retriever.contriever_normalize,
+                batch_size=config.retriever.embed_batch_size
+            )
+        elif model_type.lower() == "dpr":
+            embed_fn = create_embed_fn_from_config(
+                model_type=model_type,
+                device=device,
+                ctx_encoder_name=config.retriever.dpr_ctx_encoder,
+                question_encoder_name=config.retriever.dpr_question_encoder,
+                batch_size=config.retriever.embed_batch_size
+            )
+        elif model_type.lower() == "bge-m3":
+            # 对于 bge-m3，优先使用 retriever 配置中的路径
+            if config.retriever.bge_m3_model_path:
+                model_name = config.retriever.bge_m3_model_path
+            embed_fn = create_embed_fn_from_config(
+                model_type=model_type,
+                model_name=model_name,
+                normalize_embeddings=True
+            )
+        else:
+            print(f"警告: 不支持的模型类型 '{model_type}'，将尝试使用默认方法")
+            embed_fn = create_embed_fn_from_config(
+                model_type=model_type,
+                model_name=model_name,
+                device=device
+            )
+
+        if embed_fn:
+            print(f"✓ 已启用{model_type}模型进行语义检索")
+            return embed_fn
+    except Exception as e:
+        print(f"警告: 无法加载配置的模型 ({model_type}): {e}")
+
+    print("本地模型不可用，尝试使用API...")
+
     # 获取 API token（作为回退选项）
     token = os.environ.get('VENUS_API_TOKEN') or os.environ.get('OPENAI_API_KEY')
     if not token:
         print("警告: 未设置 VENUS_API_TOKEN 或 OPENAI_API_KEY 环境变量，语义检索不可用")
         return None
-    
+
     try:
         import httpx
     except ImportError:
         print("警告: 未安装 httpx，语义检索不可用。请运行: pip install httpx")
         return None
-    
+
     def embed_fn(texts: List[str]) -> List[List[float]]:
         """调用 Embedding API"""
         url = config.disambiguator.embed_base_url
-        
+
         headers = {
             'Content-Type': 'application/json',
             'Authorization': f'Bearer {token}'
         }
-        
+
         with httpx.Client(timeout=60) as client:
             response = client.post(
                 url,
@@ -240,11 +287,11 @@ def create_embed_fn(config) -> Optional[Callable]:
             )
             response.raise_for_status()
             data = response.json()
-            
+
             # 按 index 排序
             embeddings = sorted(data["data"], key=lambda x: x["index"])
             return [e["embedding"] for e in embeddings]
-    
+
     return embed_fn
 
 

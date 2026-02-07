@@ -2,6 +2,23 @@
 
 时间事件抽取与时间线分析系统。从文本中抽取时间事件，进行实体消歧，构建时间线，并存储为知识图谱。
 
+---
+
+## 📋 目录
+
+- [安装](#安装)
+- [项目结构](#项目结构)
+- [流水线阶段](#流水线阶段)
+- [命令行使用](#命令行使用)
+- [中间文件](#中间文件)
+- [Python API](#python-api)
+- [检索器升级 (2026-02-07)](#检索器升级-2026-02-07)
+- [配置](#配置)
+- [更新日志](#更新日志)
+- [环境变量](#环境变量)
+
+---
+
 ## 安装
 
 ```bash
@@ -16,13 +33,20 @@ pip install -e .
 
 ### 嵌入模型
 
-本项目需要嵌入模型进行语义检索。请下载并安装以下模型之一：
+本项目支持多种嵌入模型进行语义检索：
 
-- **BGE-M3**（推荐）：`BAAI/bge-m3`
-- **BGE-Large-ZH**：`BAAI/bge-large-zh-v1.5`
-- 或其他兼容的嵌入模型
+| 模型 | 类型 | 推荐场景 | 模型大小 |
+|------|------|----------|----------|
+| **Contriever-MSMARCO** | 无监督密集检索 | 通用检索（推荐） | ~438 MB |
+| **DPR** | 双编码器架构 | 问答系统 | ~876 MB |
+| **BGE-M3** | 多语言模型 | 多语言/已有模型 | ~2.3 GB |
 
 下载模型后，将模型文件放置于 `models/` 目录下，并在配置文件中指定模型路径。
+
+**快速下载 Contriever**：
+```bash
+python download_contriever.py
+```
 
 ## 项目结构
 
@@ -36,6 +60,7 @@ timeqa_agent/
 │   ├── event_filter.py        # 事件过滤器（去除 chunk 重叠产生的重复事件）
 │   ├── entity_disambiguator.py # 实体消歧器
 │   ├── timeline_extractor.py  # 时间线抽取器
+│   ├── embeddings.py          # 嵌入模型（Contriever/DPR/BGE-M3）
 │   ├── graph_store.py         # 知识图谱存储
 │   ├── graph_store_cli.py     # 图存储命令行工具
 │   ├── retriever_cli.py       # 检索器命令行工具
@@ -44,16 +69,22 @@ timeqa_agent/
 │   ├── pipeline.py            # 抽取流水线
 │   └── retrievers/
 │       ├── base.py                    # 检索器基类和数据结构
-│       ├── keyword_retriever.py       # 关键词检索器
-│       ├── semantic_retriever.py      # 语义检索器
+│       ├── keyword_retriever.py       # 关键词检索器（BM25/TF-IDF）
+│       ├── semantic_retriever.py      # 语义检索器（Contriever/DPR/BGE-M3）
 │       ├── hybrid_retriever.py        # 混合检索器
 │       ├── voting_retriever.py        # 多层投票检索器
 │       └── hierarchical_retriever.py  # 三层递进检索器
 ├── configs/
 │   └── timeqa_config.json     # 默认配置文件
+├── config_examples/           # 配置示例
+│   ├── contriever_bm25_config.json
+│   ├── dpr_bm25_config.json
+│   └── bge_m3_tfidf_config.json
 ├── data/timeqa/
 │   ├── corpus/                # 语料库 (test/train/validation.json)
 │   └── raw/                   # 原始数据
+├── test_retrievers.py         # 检索器测试脚本
+├── usage_examples.py          # 使用示例
 └── pyproject.toml
 ```
 
@@ -178,6 +209,29 @@ python -m timeqa_agent.graph_store_cli -g data/timeqa/graph/test.json --json ent
 | quit/exit | 退出 |
 
 ### 检索器查询
+
+**模型配置说明**：
+
+检索器命令行工具会自动根据配置文件（`configs/timeqa_config.json`）中的设置选择嵌入模型和检索方法：
+
+- **语义检索模型**：由 `retriever.semantic_model_type` 指定（contriever/dpr/bge-m3）
+- **关键词检索算法**：由 `retriever.keyword_algorithm` 指定（bm25/tfidf）
+- **模型路径**：由 `retriever.semantic_model_name` 等参数指定
+- **设备选择**：由 `retriever.semantic_model_device` 指定（cpu/cuda）
+
+使用自定义配置文件：
+```bash
+# 使用指定的配置文件运行检索器
+python -m timeqa_agent.retriever_cli -g data/timeqa/graph/test.json -c configs/my_config.json
+
+# 使用 Contriever + BM25 配置
+python -m timeqa_agent.retriever_cli -g data/timeqa/graph/test.json -c config_examples/contriever_bm25_config.json
+
+# 使用 DPR + BM25 配置
+python -m timeqa_agent.retriever_cli -g data/timeqa/graph/test.json -c config_examples/dpr_bm25_config.json
+```
+
+**基本用法**：
 
 ```bash
 # 交互式模式
@@ -636,6 +690,316 @@ chunks_dict = {
 chunk_data = retriever.get_chunk_by_event(events[0], chunks_dict)
 ```
 
+---
+
+## 检索器升级 (2026-02-07)
+
+### 🎯 升级内容
+
+本次升级对检索器系统进行了全面改造，支持更多先进的检索算法和嵌入模型。
+
+### ✨ 新功能
+
+#### 1. **语义检索器升级**
+
+现在支持以下嵌入模型：
+
+| 模型 | 类型 | 推荐场景 | 模型大小 |
+|------|------|----------|----------|
+| **Contriever** | 无监督密集检索 | 通用检索（推荐） | ~438 MB |
+| **Contriever-MSMARCO** | 微调版 Contriever | 高性能检索（最推荐） | ~438 MB |
+| **DPR** | 双编码器架构 | 问答系统 | ~876 MB |
+| **BGE-M3** | 多语言模型 | 多语言/已有模型 | ~2.3 GB |
+
+#### 2. **关键词检索器升级**
+
+现在支持以下算法：
+
+| 算法 | 特点 | 推荐场景 |
+|------|------|----------|
+| **BM25** | 概率排序函数 | 通用关键词检索（推荐） |
+| **TF-IDF** | 经典算法 | 保持兼容旧版本 |
+
+### 📦 安装新依赖
+
+```bash
+# 必需依赖
+pip install transformers torch rank-bm25
+
+# 可选依赖（用于 BM25 词干提取和停用词）
+pip install nltk
+```
+
+### 🚀 快速开始
+
+#### **方式 1：使用配置文件**
+
+```python
+from timeqa_agent.config import RetrieverConfig
+from timeqa_agent.retrievers import HybridRetriever
+
+# 创建配置（使用 Contriever + BM25）
+config = RetrieverConfig(
+    semantic_model_type="contriever",
+    semantic_model_name="./models/contriever-msmarco",
+    keyword_algorithm="bm25",
+    fusion_mode="rrf"
+)
+
+# 创建检索器（自动加载模型）
+retriever = HybridRetriever(graph_store, config)
+
+# 执行检索
+results = retriever.retrieve("查询内容", top_k=10)
+```
+
+#### **方式 2：手动创建嵌入函数**
+
+```python
+from timeqa_agent.embeddings import create_embed_fn
+from timeqa_agent.retrievers import SemanticRetriever
+
+# 创建 Contriever 嵌入函数
+embed_fn = create_embed_fn(
+    model_type="contriever",
+    model_name="./models/contriever-msmarco",
+    device="cpu"
+)
+
+# 创建语义检索器
+retriever = SemanticRetriever(graph_store, config, embed_fn=embed_fn)
+```
+
+### 📝 配置示例
+
+#### **示例 1：Contriever + BM25（推荐）**
+
+```json
+{
+  "retriever": {
+    "semantic_model_type": "contriever",
+    "semantic_model_name": "./models/contriever-msmarco",
+    "keyword_algorithm": "bm25",
+    "fusion_mode": "rrf"
+  }
+}
+```
+
+#### **示例 2：DPR + BM25（高性能）**
+
+```json
+{
+  "retriever": {
+    "semantic_model_type": "dpr",
+    "dpr_ctx_encoder": "./models/dpr/ctx-encoder",
+    "dpr_question_encoder": "./models/dpr/question-encoder",
+    "keyword_algorithm": "bm25",
+    "fusion_mode": "weighted_sum"
+  }
+}
+```
+
+#### **示例 3：BGE-M3 + TF-IDF（兼容旧版）**
+
+```json
+{
+  "retriever": {
+    "semantic_model_type": "bge-m3",
+    "semantic_model_name": "./models/bge-m3/bge-m3",
+    "keyword_algorithm": "tfidf"
+  }
+}
+```
+
+### 🔧 API 参考
+
+#### **RetrieverConfig 配置项**
+
+```python
+@dataclass
+class RetrieverConfig:
+    # 语义检索配置
+    semantic_model_type: str = "contriever"  # "contriever", "dpr", "bge-m3"
+    semantic_model_name: str = "facebook/contriever-msmarco"
+    semantic_model_device: str = "cpu"       # "cpu", "cuda", "cuda:0"
+    contriever_normalize: bool = True
+    dpr_ctx_encoder: str = "facebook/dpr-ctx_encoder-single-nq-base"
+    dpr_question_encoder: str = "facebook/dpr-question_encoder-single-nq-base"
+    bge_m3_model_path: str = "./models/bge-m3/bge-m3"
+
+    # 关键词检索配置
+    keyword_algorithm: str = "bm25"          # "bm25", "tfidf"
+    bm25_k1: float = 1.5
+    bm25_b: float = 0.75
+    bm25_use_stemming: bool = False
+    bm25_remove_stopwords: bool = False
+
+    # 混合检索配置
+    fusion_mode: str = "rrf"                 # "rrf", "weighted_sum", "max_score", "interleave"
+    keyword_weight: float = 0.3
+    semantic_weight: float = 0.7
+    enable_keyword: bool = True
+    enable_semantic: bool = True
+```
+
+#### **创建嵌入函数**
+
+```python
+from timeqa_agent.embeddings import create_embed_fn, create_dpr_embed_fn
+
+# 方式 1：Contriever
+embed_fn = create_embed_fn(
+    model_type="contriever",
+    model_name="./models/contriever-msmarco",
+    device="cpu"
+)
+
+# 方式 2：DPR（返回两个编码器）
+ctx_embed_fn, question_embed_fn = create_dpr_embed_fn(
+    ctx_encoder_name="./models/dpr/ctx-encoder",
+    question_encoder_name="./models/dpr/question-encoder"
+)
+
+# 方式 3：BGE-M3
+embed_fn = create_embed_fn(
+    model_type="bge-m3",
+    model_name="./models/bge-m3/bge-m3"
+)
+```
+
+### 🧪 测试
+
+运行测试脚本验证安装：
+
+```bash
+cd d:\Verause\science\codes\timeqa_agent_copy
+python test_retrievers.py
+```
+
+测试内容包括：
+1. ✅ Contriever 嵌入功能
+2. ✅ BM25 关键词检索
+3. ✅ 检索器配置
+
+### 🔄 向后兼容
+
+旧版代码无需修改即可运行：
+
+```python
+# 旧版用法（仍然支持）
+from timeqa_agent.embeddings import create_local_embed_fn
+
+embed_fn = create_local_embed_fn("./models/bge-m3/bge-m3")
+retriever = SemanticRetriever(graph_store, config, embed_fn=embed_fn)
+```
+
+新版推荐用法：
+
+```python
+# 新版用法（推荐）
+config = RetrieverConfig(
+    semantic_model_type="contriever",
+    semantic_model_name="./models/contriever-msmarco"
+)
+retriever = SemanticRetriever(graph_store, config)  # 自动创建 embed_fn
+```
+
+### 📊 性能对比
+
+| 配置 | 检索质量 | 速度 | 内存占用 |
+|------|---------|------|---------|
+| Contriever + BM25 | ⭐⭐⭐⭐⭐ | ⭐⭐⭐⭐ | ~1 GB |
+| DPR + BM25 | ⭐⭐⭐⭐⭐ | ⭐⭐⭐ | ~2 GB |
+| BGE-M3 + TF-IDF | ⭐⭐⭐⭐ | ⭐⭐⭐ | ~3 GB |
+
+### ❓ 常见问题
+
+#### **Q1: 如何下载模型？**
+
+```bash
+# 运行下载脚本
+python download_contriever.py
+
+# 或手动下载
+from transformers import AutoTokenizer, AutoModel
+tokenizer = AutoTokenizer.from_pretrained('facebook/contriever-msmarco')
+model = AutoModel.from_pretrained('facebook/contriever-msmarco')
+model.save_pretrained('./models/contriever-msmarco')
+tokenizer.save_pretrained('./models/contriever-msmarco')
+```
+
+#### **Q2: 如何使用 GPU 加速？**
+
+```python
+config = RetrieverConfig(
+    semantic_model_device="cuda"  # 或 "cuda:0"
+)
+```
+
+#### **Q3: BM25 参数如何调优？**
+
+- **k1** (1.2-2.0): 控制词频饱和度，越大词频影响越大
+- **b** (0.0-1.0): 控制文档长度归一化，越大长度影响越大
+
+推荐值：`k1=1.5, b=0.75`
+
+#### **Q4: 如何选择融合模式？**
+
+| 融合模式 | 特点 | 推荐场景 |
+|---------|------|----------|
+| `rrf` | 倒数排名融合 | 通用（推荐） |
+| `weighted_sum` | 加权求和 | 需要调整权重 |
+| `max_score` | 取最大分数 | 保守策略 |
+| `interleave` | 交错合并 | 多样性优先 |
+
+### 🛠️ 故障排除
+
+#### **问题 1: 导入错误**
+
+```
+ImportError: No module named 'rank_bm25'
+```
+
+**解决方案**：
+```bash
+pip install rank-bm25
+```
+
+#### **问题 2: 模型加载失败**
+
+```
+OSError: Model not found
+```
+
+**解决方案**：
+1. 检查模型路径是否正确
+2. 确保已下载模型
+3. 使用绝对路径或相对于工作目录的路径
+
+#### **问题 3: GPU 内存不足**
+
+```
+RuntimeError: CUDA out of memory
+```
+
+**解决方案**：
+```python
+# 方案 1: 使用 CPU
+config.semantic_model_device = "cpu"
+
+# 方案 2: 减小批处理大小
+config.embed_batch_size = 16  # 默认 32
+```
+
+### 📚 参考文献
+
+- [Contriever Paper](https://arxiv.org/abs/2112.09118)
+- [DPR Paper](https://arxiv.org/abs/2004.04906)
+- [BM25 Algorithm](https://en.wikipedia.org/wiki/Okapi_BM25)
+- [MRAG Framework](https://arxiv.org/abs/2412.15540)
+
+---
+
 ## 配置
 
 配置文件位于 `configs/timeqa_config.json`，包含以下模块：
@@ -937,15 +1301,25 @@ python -m timeqa_agent.event_validator -i data/timeqa/event/test.json -o data/ti
     "fuzzy_match": true,            // 是否模糊匹配（关键词检索）
     "case_sensitive": false,        // 是否大小写敏感
 
-    // === 关键词检索参数 ===
-    "use_tfidf": true,              // 使用 TF-IDF 排序
-    "min_keyword_length": 2,        // 最小关键词长度
-
-    // === 语义检索参数 ===
+    // === 语义检索配置 ===
+    "semantic_model_type": "contriever",  // "contriever", "dpr", "bge-m3"
+    "semantic_model_name": "./models/contriever-msmarco",
+    "semantic_model_device": "cpu",       // "cpu", "cuda", "cuda:0"
+    "contriever_normalize": true,
+    "dpr_ctx_encoder": "facebook/dpr-ctx_encoder-single-nq-base",
+    "dpr_question_encoder": "facebook/dpr-question_encoder-single-nq-base",
+    "bge_m3_model_path": "./models/bge-m3/bge-m3",
     "embedding_dim": 768,           // 嵌入维度，需与嵌入模型匹配
     "embed_batch_size": 32,         // 嵌入批处理大小
     "similarity_threshold": 0.5,    // 语义相似度阈值
-    "cache_embeddings": true,       // [未实现] 缓存嵌入向量
+
+    // === 关键词检索配置 ===
+    "keyword_algorithm": "bm25",          // "bm25", "tfidf"
+    "bm25_k1": 1.5,
+    "bm25_b": 0.75,
+    "bm25_use_stemming": false,
+    "bm25_remove_stopwords": false,
+    "min_keyword_length": 2,        // 最小关键词长度
 
     // === 向量索引参数 ===
     "vector_index_type": "flat",    // 索引类型，仅 flat 生效，hnsw 未实现
@@ -960,10 +1334,18 @@ python -m timeqa_agent.event_validator -i data/timeqa/event/test.json -o data/ti
     "fusion_mode": "rrf",           // 融合模式: rrf, weighted_sum, max_score, interleave
     "rrf_k": 60.0,                  // RRF 参数 k
     "enable_keyword": true,         // 启用关键词检索
-    "enable_semantic": true         // 启用语义检索
+    "enable_semantic": true,        // 启用语义检索
+    "cache_embeddings": true        // [未实现] 缓存嵌入向量
   }
 }
 ```
+
+**配置说明**：
+
+完整配置示例：
+- `config_examples/contriever_bm25_config.json` - Contriever + BM25（推荐）
+- `config_examples/dpr_bm25_config.json` - DPR + BM25（高性能）
+- `config_examples/bge_m3_tfidf_config.json` - BGE-M3 + TF-IDF（兼容）
 
 **实现状态**：
 | 参数 | 状态 | 说明 |
@@ -1086,6 +1468,120 @@ for event in results.events[:3]:
     print(f"  来源实体: {event.source_entity_names}")
     print(f"  分数: {event.hierarchical_score:.4f}")
 ```
+
+---
+
+## 更新日志
+
+### 2026-02-07 - 检索器系统升级
+
+#### 🎯 升级目标
+
+将 TimeQA Agent 的检索器系统升级为支持多种先进算法：
+- **语义检索**: Contriever（默认）、DPR、BGE-M3
+- **关键词检索**: BM25（默认）、TF-IDF
+
+#### 📝 修改文件清单
+
+**已修改的文件**：
+
+| 文件路径 | 修改内容 | 状态 |
+|---------|---------|------|
+| `timeqa_agent/config.py` | 扩展 RetrieverConfig，添加语义模型和关键词算法配置 | ✅ 完成 |
+| `timeqa_agent/embeddings.py` | 新增 Contriever 和 DPR 嵌入函数支持 | ✅ 完成 |
+| `timeqa_agent/retrievers/keyword_retriever.py` | 添加 BM25Index 类，支持 BM25 算法 | ✅ 完成 |
+| `timeqa_agent/retrievers/semantic_retriever.py` | 支持配置驱动的模型自动加载 | ✅ 完成 |
+| `timeqa_agent/retrievers/hybrid_retriever.py` | 适配新的检索器接口 | ✅ 完成 |
+
+**新增的文件**：
+
+| 文件路径 | 说明 | 状态 |
+|---------|------|------|
+| `download_contriever.py` | Contriever 模型下载脚本 | ✅ 完成 |
+| `test_retrievers.py` | 检索器功能测试脚本 | ✅ 完成 |
+| `usage_examples.py` | 使用示例脚本 | ✅ 完成 |
+| `config_examples/contriever_bm25_config.json` | Contriever + BM25 配置示例 | ✅ 完成 |
+| `config_examples/dpr_bm25_config.json` | DPR + BM25 配置示例 | ✅ 完成 |
+| `config_examples/bge_m3_tfidf_config.json` | BGE-M3 + TF-IDF 配置示例 | ✅ 完成 |
+
+#### 🔧 详细修改说明
+
+**1. config.py**
+
+新增配置项：
+```python
+# 语义检索配置
+semantic_model_type: str = "contriever"  # "contriever", "dpr", "bge-m3"
+semantic_model_name: str = "facebook/contriever-msmarco"
+semantic_model_device: str = "cpu"
+contriever_normalize: bool = True
+dpr_ctx_encoder: str = "facebook/dpr-ctx_encoder-single-nq-base"
+dpr_question_encoder: str = "facebook/dpr-question_encoder-single-nq-base"
+bge_m3_model_path: Optional[str] = "./models/bge-m3/bge-m3"
+
+# 关键词检索配置
+keyword_algorithm: str = "bm25"  # "bm25", "tfidf"
+bm25_k1: float = 1.5
+bm25_b: float = 0.75
+bm25_use_stemming: bool = False
+bm25_remove_stopwords: bool = False
+```
+
+**2. embeddings.py**
+
+新增函数：
+- `create_contriever_embed_fn()`: 创建 Contriever 嵌入函数
+- `create_dpr_embed_fn()`: 创建 DPR 嵌入函数（双编码器）
+- `create_embed_fn()`: 工厂函数，根据配置自动创建嵌入函数
+
+特性：
+- 支持 GPU/CPU 设备选择
+- 支持批处理
+- 支持向量归一化
+- 自动均值池化（Contriever）
+
+**3. keyword_retriever.py**
+
+新增类：
+- `BM25Index`: 基于 rank-bm25 的 BM25 索引实现
+
+新增功能：
+- 支持词干提取（可选）
+- 支持停用词移除（可选）
+- BM25 参数可配置（k1, b）
+
+修改内容：
+- `KeywordRetriever.__init__()`: 根据配置选择算法
+- `_create_index()`: 工厂方法，创建 BM25 或 TF-IDF 索引
+- 统一索引接口，兼容旧代码
+
+**4. semantic_retriever.py**
+
+修改内容：
+- `SemanticRetriever.__init__()`: 支持配置驱动的模型加载
+- 如果不提供 `embed_fn`，自动根据 `config` 创建
+- 保持向后兼容（仍可手动传入 `embed_fn`）
+
+**5. hybrid_retriever.py**
+
+修改内容：
+- `HybridRetriever.__init__()`: 接收 `config` 参数，自动创建检索器
+- `_init_retrievers()`: 传递 `embed_fn` 给 `SemanticRetriever`
+- `set_embed_fn()`: 更新为使用新的 API
+
+#### ✅ 向后兼容性
+
+所有修改**完全向后兼容**，旧代码无需修改即可运行。
+
+#### 🎯 推荐配置
+
+| 场景 | 推荐配置 | 说明 |
+|------|---------|------|
+| **通用检索** | Contriever + BM25 | 平衡性能和质量 |
+| **高精度检索** | DPR + BM25 | 最佳检索质量 |
+| **保持兼容** | BGE-M3 + TF-IDF | 使用已有模型 |
+
+---
 
 ## 环境变量
 

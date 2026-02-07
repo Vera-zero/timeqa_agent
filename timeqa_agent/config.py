@@ -371,24 +371,52 @@ class RetrieverConfig:
     include_metadata: bool = True            # 是否包含元数据
     fuzzy_match: bool = True                 # 是否模糊匹配
     case_sensitive: bool = False             # 是否大小写敏感
-    
-    # 关键词检索参数
-    use_tfidf: bool = True                   # 是否使用 TF-IDF 排序
-    min_keyword_length: int = 2              # 最小关键词长度
-    
-    # 语义检索参数
+
+    # ========== 语义检索配置 ==========
+    # 语义检索模型类型
+    semantic_model_type: str = "contriever"  # 模型类型: "contriever", "dpr", "bge-m3"
+    semantic_model_name: str = "facebook/contriever-msmarco"  # HuggingFace 模型名称或本地路径
+    semantic_model_device: str = "cpu"       # 设备: "cpu", "cuda", "cuda:0" 等
+
+    # Contriever 特定参数
+    contriever_normalize: bool = True        # 是否归一化嵌入向量
+
+    # DPR 特定参数
+    dpr_ctx_encoder: str = "facebook/dpr-ctx_encoder-single-nq-base"  # DPR 上下文编码器
+    dpr_question_encoder: str = "facebook/dpr-question_encoder-single-nq-base"  # DPR 问题编码器
+
+    # BGE-M3 特定参数（保留兼容）
+    bge_m3_model_path: Optional[str] = "./models/bge-m3/bge-m3"  # BGE-M3 本地路径
+
+    # 语义检索通用参数
     embedding_dim: int = 768                 # 嵌入维度
     embed_batch_size: int = 32               # 批量嵌入大小
     similarity_threshold: float = 0.5        # 语义相似度阈值
     cache_embeddings: bool = True            # 是否缓存嵌入
-    
+
+    # ========== 关键词检索配置 ==========
+    # 关键词检索算法类型
+    keyword_algorithm: str = "bm25"          # 算法类型: "bm25", "tfidf"
+
+    # BM25 参数
+    bm25_k1: float = 1.5                     # BM25 k1 参数（词频饱和度）
+    bm25_b: float = 0.75                     # BM25 b 参数（文档长度归一化）
+    bm25_use_stemming: bool = False          # 是否使用词干提取
+    bm25_remove_stopwords: bool = False      # 是否移除停用词
+
+    # TF-IDF 参数（保留兼容）
+    use_tfidf: bool = True                   # 是否使用 TF-IDF 排序（已弃用，使用 keyword_algorithm）
+    min_keyword_length: int = 2              # 最小关键词长度
+
+    # ========== 向量索引配置 ==========
     # 向量索引参数
     vector_index_type: str = "flat"          # 索引类型: flat, hnsw
     vector_metric: str = "cosine"            # 距离度量: cosine, l2, ip
     hnsw_m: int = 16                         # HNSW M 参数
     hnsw_ef_construction: int = 200          # HNSW 构建时的 ef
     hnsw_ef_search: int = 50                 # HNSW 搜索时的 ef
-    
+
+    # ========== 混合检索配置 ==========
     # 混合检索参数
     keyword_weight: float = 0.3              # 关键词检索权重
     semantic_weight: float = 0.7             # 语义检索权重

@@ -326,42 +326,70 @@ class VectorIndex:
 class SemanticRetriever(BaseRetriever):
     """
     语义检索器
-    
+
     基于向量嵌入进行语义相似度检索
     支持对实体、事件、时间线进行语义匹配
+
+    支持的模型:
+    - Contriever: 无监督密集检索模型（推荐）
+    - DPR: Dense Passage Retrieval（双编码器）
+    - BGE-M3: 本地多语言模型
     """
-    
+
     def __init__(
         self,
         graph_store: TimelineGraphStore,
-        embed_fn: Callable[[List[str]], List[List[float]]],
-        config: Optional[RetrieverConfig] = None,
+        config: RetrieverConfig,
+        embed_fn: Optional[Callable[[List[str]], List[List[float]]]] = None,
         index_dir: Optional[str] = None,
         auto_save: bool = True,
     ):
         """
         初始化语义检索器
-        
+
         Args:
             graph_store: 图存储
-            embed_fn: 嵌入函数，接受文本列表，返回向量列表
             config: 检索器配置
+            embed_fn: 嵌入函数（可选，如果不提供则根据 config 自动创建）
             index_dir: 索引缓存目录，设置后会自动加载/保存索引
             auto_save: 是否在首次构建索引后自动保存
         """
-        super().__init__(graph_store, config or RetrieverConfig())
-        self.embed_fn = embed_fn
+        super().__init__(graph_store, config)
+
+        # 如果未提供 embed_fn，则根据配置创建
+        if embed_fn is None:
+            from ..embeddings import create_embed_fn
+            print(f"正在根据配置创建嵌入函数...")
+            print(f"  模型类型: {config.semantic_model_type}")
+            print(f"  模型名称: {config.semantic_model_name}")
+            print(f"  设备: {config.semantic_model_device}")
+
+            self.embed_fn = create_embed_fn(
+                model_type=config.semantic_model_type,
+                model_name=config.semantic_model_name,
+                device=config.semantic_model_device,
+                normalize=config.contriever_normalize,
+                batch_size=config.embed_batch_size
+            )
+
+            if self.embed_fn is None:
+                raise RuntimeError(
+                    f"无法创建嵌入函数。请检查配置或手动提供 embed_fn 参数。"
+                )
+        else:
+            self.embed_fn = embed_fn
+
         self._index_dir = Path(index_dir) if index_dir else None
         self._auto_save = auto_save
-        
+
         # 向量索引
         self._entity_index: Optional[VectorIndex] = None
         self._event_index: Optional[VectorIndex] = None
         self._timeline_index: Optional[VectorIndex] = None
-        
+
         # 索引是否已构建
         self._indexes_built = False
-        
+
         # 尝试自动加载已缓存的索引
         if self._index_dir:
             self._try_load_indexes()
