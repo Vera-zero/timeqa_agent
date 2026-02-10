@@ -40,9 +40,11 @@ from .query_parser import (
     TimeConstraintType,
     TimeConstraint,
     QueryParseResult,
-    RetrievalQueries,
-    QueryParserOutput,
     QueryParser,
+)
+from .search import (
+    RetrievalQueries,
+    SearchQueryGenerator,
 )
 from .retrievers import (
     RetrievalMode,
@@ -119,9 +121,10 @@ __all__ = [
     "TimeConstraintType",
     "TimeConstraint",
     "QueryParseResult",
-    "RetrievalQueries",
-    "QueryParserOutput",
     "QueryParser",
+    # Search Query Generator
+    "RetrievalQueries",
+    "SearchQueryGenerator",
     # Retrievers
     "RetrievalMode",
     "RetrievalResult",

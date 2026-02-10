@@ -1,8 +1,8 @@
 """
-查询解析器命令行工具
+检索语句生成器命令行工具
 
 支持：
-- 解析单个问题（提取主干、时间约束、事件类型、答案类型）
+- 生成检索语句（支持单一实体和问题句子输入）
 - 交互式模式
 - JSON 输出
 """
@@ -13,7 +13,7 @@ import sys
 from typing import Optional
 
 from .config import load_config
-from .query_parser import QueryParser, QueryParseResult
+from .search import SearchQueryGenerator, RetrievalQueries
 
 
 def print_json(data, indent: int = 2):
@@ -21,32 +21,27 @@ def print_json(data, indent: int = 2):
     print(json.dumps(data, ensure_ascii=False, indent=indent))
 
 
-def print_parse_result(result: QueryParseResult, verbose: bool = False):
-    """打印解析结果"""
+def print_retrieval_queries(queries: RetrievalQueries, verbose: bool = False):
+    """打印检索语句"""
     print("\n" + "=" * 60)
-    print("查询解析结果")
+    print("检索语句生成结果")
     print("=" * 60)
 
-    print(f"\n原始问题: {result.original_question}")
-    print(f"问题主干: {result.question_stem}")
+    print(f"\n实体查询:")
+    print(f"  {queries.entity_query}")
 
-    print(f"\n时间约束:")
-    tc = result.time_constraint
-    print(f"  类型: {tc.constraint_type.value}")
-    if tc.original_expression:
-        print(f"  原始表达式: {tc.original_expression}")
-    if tc.normalized_time:
-        print(f"  标准化时间: {tc.normalized_time}")
-    if tc.description:
-        print(f"  描述: {tc.description}")
+    print(f"\n时间线查询:")
+    print(f"  {queries.timeline_query}")
 
-    print(f"\n事件类型: {result.event_type.value}")
-    print(f"答案类型: {result.answer_type.value}")
+    print(f"\n事件查询 ({len(queries.event_queries)} 条):")
+    for i, eq in enumerate(queries.event_queries, 1):
+        print(f"  {i}. {eq}")
+
     print()
 
 
-class QueryParserCLI:
-    """查询解析器命令行接口"""
+class SearchCLI:
+    """检索语句生成器命令行接口"""
 
     def __init__(
         self,
@@ -58,23 +53,23 @@ class QueryParserCLI:
         # 加载配置
         self.config = load_config(config_path) if config_path else load_config()
 
-        # 创建解析器
-        self.parser = QueryParser(self.config.query_parser)
+        # 创建生成器
+        self.generator = SearchQueryGenerator(self.config.query_parser)
 
-        if not self.config.query_parser.enabled:
-            print("警告: 查询解析器已禁用，将返回简单结果")
-
-    def cmd_parse(self, question: str) -> QueryParseResult:
-        """解析单个问题"""
-        return self.parser.parse_question(question)
+    def cmd_generate(self, input_text: str) -> RetrievalQueries:
+        """生成检索语句"""
+        return self.generator.generate_retrieval_queries(input_text)
 
     def interactive(self):
         """交互式模式"""
         print("\n" + "=" * 60)
-        print("TimeQA 查询解析器 - 交互式模式")
+        print("TimeQA 检索语句生成器 - 交互式模式")
         print("=" * 60)
-        print("命令:")
-        print("  <问题>           - 解析问题")
+        print("功能:")
+        print("  - 输入单一实体（如 'Barack Obama'）：直接返回实体作为检索语句")
+        print("  - 输入问题句子（如 'Which team did he play for?'）：生成多层检索语句")
+        print("\n命令:")
+        print("  <输入>           - 生成检索语句")
         print("  verbose          - 切换详细输出")
         print("  json             - 切换 JSON 输出模式")
         print("  help             - 显示帮助")
@@ -104,15 +99,15 @@ class QueryParserCLI:
                     json_mode = not json_mode
                     print(f"JSON 输出: {'开启' if json_mode else '关闭'}")
                 else:
-                    # 解析问题
+                    # 生成检索语句
                     try:
-                        result = self.cmd_parse(line)
+                        queries = self.cmd_generate(line)
                         if json_mode:
-                            print_json(result.to_dict())
+                            print_json(queries.to_dict())
                         else:
-                            print_parse_result(result, self.verbose)
+                            print_retrieval_queries(queries, self.verbose)
                     except Exception as e:
-                        print(f"解析失败: {e}")
+                        print(f"生成失败: {e}")
 
             except KeyboardInterrupt:
                 print("\n再见!")
@@ -124,21 +119,24 @@ class QueryParserCLI:
 
 def main():
     parser = argparse.ArgumentParser(
-        description="TimeQA 查询解析器命令行工具",
+        description="TimeQA 检索语句生成器命令行工具",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 示例:
   # 交互式模式
-  python -m timeqa_agent.query_parser_cli
+  python -m timeqa_agent.search_cli
 
-  # 解析单个问题
-  python -m timeqa_agent.query_parser_cli parse "Which team did Attaphol Buspakom play for in 2007?"
+  # 生成单一实体的检索语句
+  python -m timeqa_agent.search_cli generate "Thierry Audel"
+
+  # 生成问题句子的检索语句
+  python -m timeqa_agent.search_cli generate "Which team did Thierry Audel play for?"
 
   # JSON 格式输出
-  python -m timeqa_agent.query_parser_cli parse "Where did John work during the Olympics?" --json
+  python -m timeqa_agent.search_cli generate "Barack Obama" --json
 
   # 使用指定配置文件
-  python -m timeqa_agent.query_parser_cli -c configs/timeqa_config.json parse "When did he graduate?"
+  python -m timeqa_agent.search_cli -c configs/timeqa_config.json generate "Who was Anna Karina married to?"
 """
     )
 
@@ -151,13 +149,13 @@ def main():
         "command",
         nargs="?",
         default="interactive",
-        help="命令: parse, interactive"
+        help="命令: generate, interactive"
     )
 
     parser.add_argument(
-        "question",
+        "input_text",
         nargs="?",
-        help="要解析的问题"
+        help="输入文本（实体名或问题句子）"
     )
 
     parser.add_argument(
@@ -174,7 +172,7 @@ def main():
 
     args = parser.parse_args()
 
-    cli = QueryParserCLI(
+    cli = SearchCLI(
         config_path=args.config,
         verbose=args.verbose,
     )
@@ -183,15 +181,15 @@ def main():
 
     if cmd == "interactive":
         cli.interactive()
-    elif cmd == "parse" and args.question:
+    elif cmd == "generate" and args.input_text:
         try:
-            result = cli.cmd_parse(args.question)
+            queries = cli.cmd_generate(args.input_text)
             if args.json:
-                print_json(result.to_dict())
+                print_json(queries.to_dict())
             else:
-                print_parse_result(result, args.verbose)
+                print_retrieval_queries(queries, args.verbose)
         except Exception as e:
-            print(f"解析失败: {e}")
+            print(f"生成失败: {e}")
             sys.exit(1)
     else:
         parser.print_help()

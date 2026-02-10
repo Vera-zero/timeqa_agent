@@ -64,8 +64,10 @@ timeqa_agent/
 │   ├── graph_store.py         # 知识图谱存储
 │   ├── graph_store_cli.py     # 图存储命令行工具
 │   ├── retriever_cli.py       # 检索器命令行工具
-│   ├── query_parser.py        # 查询解析器
+│   ├── query_parser.py        # 查询解析器（问题主干和时间约束提取）
 │   ├── query_parser_cli.py    # 查询解析器命令行工具
+│   ├── search.py              # 检索语句生成器
+│   ├── search_cli.py          # 检索语句生成器命令行工具
 │   ├── pipeline.py            # 抽取流水线
 │   └── retrievers/
 │       ├── base.py                    # 检索器基类和数据结构
@@ -493,26 +495,20 @@ Chunk索引: 5 (共 5 个chunks)
 
 ### 查询解析器
 
-查询解析器用于将用户问题分解为主干部分和时间约束部分，并生成针对实体、事件、时间线的检索语句。
+查询解析器用于将用户问题分解为主干部分和时间约束部分，并识别事件类型和答案类型。
 
 ```bash
 # 交互式模式
 python -m timeqa_agent.query_parser_cli
 
-# 解析单个问题（完整流程：解析 + 生成检索语句）
+# 解析单个问题
 python -m timeqa_agent.query_parser_cli parse "Which team did Attaphol Buspakom play for in 2007?"
 
-# 仅解析问题（不生成检索语句）
-python -m timeqa_agent.query_parser_cli parse-only "Where did John work during the Beijing Olympics?"
-
-# 仅生成检索语句（直接输入问题主干）
-python -m timeqa_agent.query_parser_cli retrieval "Which team did Attaphol Buspakom play for?"
-
 # JSON 格式输出
-python -m timeqa_agent.query_parser_cli parse "When did he graduate?" --json
+python -m timeqa_agent.query_parser_cli parse "Where did John work during the Olympics?" --json
 
 # 使用指定配置文件
-python -m timeqa_agent.query_parser_cli -c configs/timeqa_config.json parse "Who was president in 1990?"
+python -m timeqa_agent.query_parser_cli -c configs/timeqa_config.json parse "When did he graduate?"
 ```
 
 ### 查询解析器命令行参数
@@ -528,6 +524,9 @@ python -m timeqa_agent.query_parser_cli -c configs/timeqa_config.json parse "Who
 **文本格式输出：**
 
 ```
+查询解析结果
+============================================================
+
 原始问题: Which team did Attaphol Buspakom play for in 2007?
 问题主干: Which team did Attaphol Buspakom play for?
 
@@ -537,44 +536,24 @@ python -m timeqa_agent.query_parser_cli -c configs/timeqa_config.json parse "Who
   标准化时间: 2007
   描述: The year 2007
 
-检索语句:
-  实体查询: Attaphol Buspakom, a Thai professional football player
-  时间线查询: Attaphol Buspakom's football career, clubs and teams played for
-  事件查询 (5 条):
-    1. Attaphol Buspakom played for Buriram United F.C.
-    2. Attaphol Buspakom played for Chonburi F.C.
-    3. Attaphol Buspakom played for Thailand national football team
-    4. Attaphol Buspakom joined a football club
-    5. Attaphol Buspakom transferred to a new team
+事件类型: interval
+答案类型: entity
 ```
 
 **JSON 格式输出：**
 
 ```json
 {
-  "parse_result": {
-    "original_question": "Which team did Attaphol Buspakom play for in 2007?",
-    "question_stem": "Which team did Attaphol Buspakom play for?",
-    "time_constraint": {
-      "constraint_type": "explicit",
-      "original_expression": "in 2007",
-      "normalized_time": "2007",
-      "description": "The year 2007"
-    },
-    "event_type": "interval",
-    "answer_type": "entity"
+  "original_question": "Which team did Attaphol Buspakom play for in 2007?",
+  "question_stem": "Which team did Attaphol Buspakom play for?",
+  "time_constraint": {
+    "constraint_type": "explicit",
+    "original_expression": "in 2007",
+    "normalized_time": "2007",
+    "description": "The year 2007"
   },
-  "retrieval_queries": {
-    "entity_query": "Attaphol Buspakom, a Thai professional football player",
-    "timeline_query": "Attaphol Buspakom's football career, clubs and teams played for",
-    "event_queries": [
-      "Attaphol Buspakom played for Buriram United F.C.",
-      "Attaphol Buspakom played for Chonburi F.C.",
-      "Attaphol Buspakom played for Thailand national football team",
-      "Attaphol Buspakom joined a football club",
-      "Attaphol Buspakom transferred to a new team"
-    ]
-  }
+  "event_type": "interval",
+  "answer_type": "entity"
 }
 ```
 
@@ -585,6 +564,91 @@ python -m timeqa_agent.query_parser_cli -c configs/timeqa_config.json parse "Who
 | explicit | 显式时间约束 | "in 2007", "from 1990 to 2000", "before 1980" |
 | implicit | 隐式时间约束 | "during the Beijing Olympics", "when he was president" |
 | none | 无时间约束 | "Who is the CEO of Apple?" |
+
+### 检索语句生成器
+
+检索语句生成器用于生成针对实体、事件、时间线的检索语句。支持两种输入类型：
+- **单一实体**：直接返回实体名作为检索语句
+- **问题句子**：调用 LLM 生成多层检索语句
+
+```bash
+# 交互式模式
+python -m timeqa_agent.search_cli
+
+# 生成单一实体的检索语句
+python -m timeqa_agent.search_cli generate "Thierry Audel"
+
+# 生成问题句子的检索语句
+python -m timeqa_agent.search_cli generate "Which team did Thierry Audel play for?"
+
+# JSON 格式输出
+python -m timeqa_agent.search_cli generate "Barack Obama" --json
+
+# 使用指定配置文件
+python -m timeqa_agent.search_cli -c configs/timeqa_config.json generate "Who was Anna Karina married to?"
+```
+
+### 检索语句生成器输出示例
+
+**单一实体输入：**
+
+输入: `Thierry Audel`
+
+文本格式输出：
+```
+检索语句生成结果
+============================================================
+
+实体查询:
+  Thierry Audel
+
+时间线查询:
+  Thierry Audel's timeline
+
+事件查询 (1 条):
+  1. Thierry Audel
+```
+
+JSON 格式输出：
+```json
+{
+  "entity_query": "Thierry Audel",
+  "timeline_query": "Thierry Audel's timeline",
+  "event_queries": [
+    "Thierry Audel"
+  ]
+}
+```
+
+**问题句子输入：**
+
+输入: `Which team did Thierry Audel play for?`
+
+文本格式输出：
+```
+检索语句生成结果
+============================================================
+
+实体查询:
+  Thierry Audel, a French professional footballer who plays as a centre back
+
+时间线查询:
+  Thierry Audel's football career
+
+事件查询 (1 条):
+  1. Which team did Thierry Audel play for?
+```
+
+JSON 格式输出：
+```json
+{
+  "entity_query": "Thierry Audel, a French professional footballer who plays as a centre back",
+  "timeline_query": "Thierry Audel's football career",
+  "event_queries": [
+    "Which team did Thierry Audel play for?"
+  ]
+}
+```
 
 ## 中间文件
 
@@ -618,6 +682,7 @@ from timeqa_agent import (
     PipelineConfig,
     QueryParser,
 )
+from timeqa_agent.search import SearchQueryGenerator
 
 # 使用流水线
 config = PipelineConfig(
@@ -660,24 +725,29 @@ events = store.get_events_in_time_range("1990", "2000")
 # 使用查询解析器
 parser = QueryParser()
 
-# 完整处理流程
-output = parser.process("Which team did Attaphol Buspakom play for in 2007?")
-print(output.parse_result.original_question)  # "Which team did Attaphol Buspakom play for in 2007?"
-print(output.parse_result.question_stem)  # "Which team did Attaphol Buspakom play for?"
-print(output.parse_result.time_constraint.constraint_type)  # "explicit"
-print(output.retrieval_queries.entity_query)  # "Attaphol Buspakom, a Thai professional football player"
-print(output.retrieval_queries.event_queries)  # ["Attaphol Buspakom played for...", ...]
+# 解析问题，提取主干和时间约束
+parse_result = parser.parse_question("Which team did Attaphol Buspakom play for in 2007?")
+print(parse_result.original_question)  # "Which team did Attaphol Buspakom play for in 2007?"
+print(parse_result.question_stem)  # "Which team did Attaphol Buspakom play for?"
+print(parse_result.time_constraint.constraint_type)  # "explicit"
+print(parse_result.time_constraint.normalized_time)  # "2007"
+print(parse_result.event_type)  # "interval"
+print(parse_result.answer_type)  # "entity"
 
-# 分步调用
-parse_result = parser.parse_question("Where did John work during the Olympics?")
-print(parse_result.original_question)  # "Where did John work during the Olympics?"
-print(parse_result.question_stem)  # "Where did John work?"
-print(parse_result.time_constraint.constraint_type)  # "implicit"
+# 使用检索语句生成器
+generator = SearchQueryGenerator()
 
-queries = parser.generate_retrieval_queries("Where did John work?")
-print(queries.entity_query)
-print(queries.timeline_query)
-print(queries.event_queries)
+# 单一实体输入
+queries = generator.generate_retrieval_queries("Thierry Audel")
+print(queries.entity_query)  # "Thierry Audel"
+print(queries.timeline_query)  # "Thierry Audel's timeline"
+print(queries.event_queries)  # ["Thierry Audel"]
+
+# 问题句子输入
+queries = generator.generate_retrieval_queries("Which team did Thierry Audel play for?")
+print(queries.entity_query)  # "Thierry Audel, a French professional footballer who plays as a centre back"
+print(queries.timeline_query)  # "Thierry Audel's football career"
+print(queries.event_queries)  # ["Which team did Thierry Audel play for?"]
 
 # 从检索结果溯源到原始chunks
 from timeqa_agent.retrievers import HybridRetriever

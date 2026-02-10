@@ -1,11 +1,11 @@
 """
 Query Parser Module
 
-将用户问题解析为主干部分和时间约束部分，并生成针对实体、事件、时间线的检索语句。
+将用户问题解析为主干部分和时间约束部分。
 
 功能:
 1. 将问题分解为主干（核心问题）和时间约束（显式/隐式）
-2. 基于主干生成多层检索语句（实体、时间线、事件）
+2. 识别事件类型和答案类型
 """
 
 from __future__ import annotations
@@ -98,47 +98,6 @@ class QueryParseResult:
         )
 
 
-@dataclass
-class RetrievalQueries:
-    """检索语句集合"""
-    entity_query: str              # 实体检索语句：标准化名称+简短描述
-    timeline_query: str            # 时间线检索语句：时间线名称+描述+相关实体
-    event_queries: List[str]       # 事件检索语句列表：将主干问句转为多个陈述句
-
-    def to_dict(self) -> Dict[str, Any]:
-        return {
-            "entity_query": self.entity_query,
-            "timeline_query": self.timeline_query,
-            "event_queries": self.event_queries,
-        }
-
-    @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "RetrievalQueries":
-        return cls(
-            entity_query=data.get("entity_query", ""),
-            timeline_query=data.get("timeline_query", ""),
-            event_queries=data.get("event_queries", []),
-        )
-
-
-@dataclass
-class QueryParserOutput:
-    """查询解析器完整输出"""
-    parse_result: QueryParseResult    # 解析结果
-    retrieval_queries: RetrievalQueries  # 检索语句
-
-    def to_dict(self) -> Dict[str, Any]:
-        return {
-            "parse_result": self.parse_result.to_dict(),
-            "retrieval_queries": self.retrieval_queries.to_dict(),
-        }
-
-    @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "QueryParserOutput":
-        return cls(
-            parse_result=QueryParseResult.from_dict(data.get("parse_result", {})),
-            retrieval_queries=RetrievalQueries.from_dict(data.get("retrieval_queries", {})),
-        )
 
 
 # ============================================================
@@ -303,115 +262,10 @@ Question: {question}
 Output in JSON format:"""
 
 
-# ============================================================
-# Stage 2: 检索语句生成 Prompt - Few-shot
-# ============================================================
-
-RETRIEVAL_SYSTEM_PROMPT = """You are an expert in generating retrieval queries for a temporal knowledge base. Given a question stem (core question without time constraints), generate retrieval queries for three layers:
-
-## Layer Definitions
-
-1. **Entity Query**: Generate a query to retrieve relevant entities
-   - Format: "[Entity Name] [brief description from common knowledge]"
-   - Use the standardized/canonical name of the entity
-   - Include a brief description based on commonly known facts
-
-2. **Timeline Query**: Generate a query to retrieve relevant timelines
-   - Format: "[Entity Name]'s [aspect/career/life phase]"
-   - Focus on the aspect of the entity's life/career that is relevant to the question
-
-3. **Event Queries**: Generate event query to retrieve relevant events
-   - Use the question stem directly as the event query
-   - Do NOT generate additional variations or common knowledge based statements
-   - Only output the question stem itself
-
-## Output Format
-```json
-{
-  "entity_query": "Entity name + brief description",
-  "timeline_query": "Timeline name + description + related entities",
-  "event_queries": [
-    "Question stem"
-  ]
-}
-```
-
-## Few-shot Examples
-
-### Example 1
-Question Stem: "Which team did Thierry Audel play for?"
-
-Output:
-```json
-{
-  "entity_query": "Thierry Audel, a French professional footballer who plays as a centre back",
-  "timeline_query": "Thierry Audel's football career",
-  "event_queries": [
-    "Which team did Thierry Audel play for?"
-  ]
-}
-```
-
-### Example 2
-Question Stem: "Who was Anna Karina married to?"
-
-Output:
-```json
-{
-  "entity_query": "Anna Karina, a Danish-French film actress, director, writer, and singer",
-  "timeline_query": "Anna Karina's personal life and marriages",
-  "event_queries": [
-    "Who was Anna Karina married to?"
-  ]
-}
-```
-
-### Example 3
-Question Stem: "What position did Carl Eric Almgren hold?"
-
-Output:
-```json
-{
-  "entity_query": "Carl Eric Almgren, a Swedish Army officer and general",
-  "timeline_query": "Carl Eric Almgren's military career",
-  "event_queries": [
-    "What position did Carl Eric Almgren hold?"
-  ]
-}
-```
-
-### Example 4
-Question Stem: "Who did Knox Cunningham serve as Parliamentary Private Secretary to?"
-
-Output:
-```json
-{
-  "entity_query": "Knox Cunningham, a Northern Irish barrister, businessman and politician",
-  "timeline_query": "Knox Cunningham's political career",
-  "event_queries": [
-    "Who did Knox Cunningham serve as Parliamentary Private Secretary to?"
-  ]
-}
-```
-
-## Important Notes
-1. The event query MUST be the question stem itself - do NOT add any variations
-2. Use the entity's commonly known canonical name in all queries
-3. The timeline query should focus on the relevant aspect (career, education, achievements, etc.)
-4. Do NOT generate additional queries based on common knowledge
-"""
-
-RETRIEVAL_USER_PROMPT = """Generate retrieval queries for the following question stem:
-
-Question Stem: {question_stem}
-
-Output in JSON format:"""
-
-
 class QueryParser:
     """查询解析器
 
-    将用户问题解析为主干和时间约束，并生成多层检索语句。
+    将用户问题解析为主干和时间约束。
     """
 
     def __init__(
@@ -525,87 +379,4 @@ class QueryParser:
             time_constraint=time_constraint,
             event_type=event_type,
             answer_type=answer_type,
-        )
-
-    def generate_retrieval_queries(self, question_stem: str) -> RetrievalQueries:
-        """
-        基于问题主干生成检索语句
-
-        Args:
-            question_stem: 问题主干（不含时间约束）
-
-        Returns:
-            RetrievalQueries: 检索语句集合
-        """
-        user_prompt = RETRIEVAL_USER_PROMPT.format(question_stem=question_stem)
-
-        messages = [
-            {"role": "system", "content": RETRIEVAL_SYSTEM_PROMPT},
-            {"role": "user", "content": user_prompt},
-        ]
-
-        content = self._call_api(messages)
-        data = self._parse_json_response(content)
-
-        return RetrievalQueries(
-            entity_query=data.get("entity_query", ""),
-            timeline_query=data.get("timeline_query", ""),
-            event_queries=data.get("event_queries", []),
-        )
-
-    def process(self, question: str) -> QueryParserOutput:
-        """
-        完整处理流程：解析问题并生成检索语句
-
-        Args:
-            question: 原始问题
-
-        Returns:
-            QueryParserOutput: 完整输出（解析结果 + 检索语句）
-        """
-        if not self.config.enabled:
-            # 如果禁用查询解析器，返回原始问题作为主干，无时间约束
-            parse_result = QueryParseResult(
-                original_question=question,
-                question_stem=question,
-                time_constraint=TimeConstraint(
-                    constraint_type=TimeConstraintType.NONE,
-                    original_expression="",
-                    normalized_time=None,
-                    description="Query parser disabled",
-                ),
-                event_type=EventType.POINT,
-                answer_type=AnswerType.ENTITY,
-            )
-            # 生成简单的检索语句
-            retrieval_queries = RetrievalQueries(
-                entity_query=question,
-                timeline_query=question,
-                event_queries=[question],
-            )
-            return QueryParserOutput(
-                parse_result=parse_result,
-                retrieval_queries=retrieval_queries,
-            )
-
-        # Step 1: 解析问题
-        print("Step 1: 解析问题，提取主干、时间约束、事件类型和答案类型...")
-        parse_result = self.parse_question(question)
-        print(f"  - 主干: {parse_result.question_stem}")
-        print(f"  - 时间约束类型: {parse_result.time_constraint.constraint_type.value}")
-        if parse_result.time_constraint.original_expression:
-            print(f"  - 时间表达式: {parse_result.time_constraint.original_expression}")
-        print(f"  - 事件类型: {parse_result.event_type.value}")
-        print(f"  - 答案类型: {parse_result.answer_type.value}")
-
-        # Step 2: 生成检索语句
-        print("\nStep 2: 生成检索语句...")
-        retrieval_queries = self.generate_retrieval_queries(parse_result.question_stem)
-        print(f"  - 实体查询: {retrieval_queries.entity_query}")
-        print(f"  - 时间线查询: {retrieval_queries.timeline_query}")
-        print(f"  - 事件查询数: {len(retrieval_queries.event_queries)}")
-
-        return QueryParserOutput(
-            parse_result=parse_result,
-            retrieval_queries=retrieval_queries,
         )
