@@ -525,6 +525,8 @@ python -m timeqa_agent.query_parser_cli -c configs/timeqa_config.json parse "Who
 
 ### 查询解析器输出示例
 
+**文本格式输出：**
+
 ```
 原始问题: Which team did Attaphol Buspakom play for in 2007?
 问题主干: Which team did Attaphol Buspakom play for?
@@ -544,6 +546,36 @@ python -m timeqa_agent.query_parser_cli -c configs/timeqa_config.json parse "Who
     3. Attaphol Buspakom played for Thailand national football team
     4. Attaphol Buspakom joined a football club
     5. Attaphol Buspakom transferred to a new team
+```
+
+**JSON 格式输出：**
+
+```json
+{
+  "parse_result": {
+    "original_question": "Which team did Attaphol Buspakom play for in 2007?",
+    "question_stem": "Which team did Attaphol Buspakom play for?",
+    "time_constraint": {
+      "constraint_type": "explicit",
+      "original_expression": "in 2007",
+      "normalized_time": "2007",
+      "description": "The year 2007"
+    },
+    "event_type": "interval",
+    "answer_type": "entity"
+  },
+  "retrieval_queries": {
+    "entity_query": "Attaphol Buspakom, a Thai professional football player",
+    "timeline_query": "Attaphol Buspakom's football career, clubs and teams played for",
+    "event_queries": [
+      "Attaphol Buspakom played for Buriram United F.C.",
+      "Attaphol Buspakom played for Chonburi F.C.",
+      "Attaphol Buspakom played for Thailand national football team",
+      "Attaphol Buspakom joined a football club",
+      "Attaphol Buspakom transferred to a new team"
+    ]
+  }
+}
 ```
 
 ### 时间约束类型
@@ -630,6 +662,7 @@ parser = QueryParser()
 
 # 完整处理流程
 output = parser.process("Which team did Attaphol Buspakom play for in 2007?")
+print(output.parse_result.original_question)  # "Which team did Attaphol Buspakom play for in 2007?"
 print(output.parse_result.question_stem)  # "Which team did Attaphol Buspakom play for?"
 print(output.parse_result.time_constraint.constraint_type)  # "explicit"
 print(output.retrieval_queries.entity_query)  # "Attaphol Buspakom, a Thai professional football player"
@@ -637,6 +670,7 @@ print(output.retrieval_queries.event_queries)  # ["Attaphol Buspakom played for.
 
 # 分步调用
 parse_result = parser.parse_question("Where did John work during the Olympics?")
+print(parse_result.original_question)  # "Where did John work during the Olympics?"
 print(parse_result.question_stem)  # "Where did John work?"
 print(parse_result.time_constraint.constraint_type)  # "implicit"
 

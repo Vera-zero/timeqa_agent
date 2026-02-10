@@ -171,6 +171,7 @@ PARSE_SYSTEM_PROMPT = """You are an expert in temporal question analysis. Your t
 Output a JSON object with the following structure:
 ```json
 {
+  "original_question": "The original question as provided by the user",
   "question_stem": "The core question without time constraint",
   "time_constraint": {
     "constraint_type": "explicit|implicit|none",
@@ -189,6 +190,7 @@ Input: "Which team did Thierry Audel play for in 2013?"
 Output:
 ```json
 {
+  "original_question": "Which team did Thierry Audel play for in 2013?",
   "question_stem": "Which team did Thierry Audel play for?",
   "time_constraint": {
     "constraint_type": "explicit",
@@ -205,6 +207,7 @@ Input: "Who was Anna Karina married to during her time at French New Wave?"
 Output:
 ```json
 {
+  "original_question": "Who was Anna Karina married to during her time at French New Wave?",
   "question_stem": "Who was Anna Karina married to?",
   "time_constraint": {
     "constraint_type": "implicit",
@@ -221,6 +224,7 @@ Input: "What position did Carl Eric Almgren hold from 1969 to 1976?"
 Output:
 ```json
 {
+  "original_question": "What position did Carl Eric Almgren hold from 1969 to 1976?",
   "question_stem": "What position did Carl Eric Almgren hold?",
   "time_constraint": {
     "constraint_type": "explicit",
@@ -237,6 +241,7 @@ Input: "When did Knox Cunningham become a Queen's Counsel?"
 Output:
 ```json
 {
+  "original_question": "When did Knox Cunningham become a Queen's Counsel?",
   "question_stem": "When did Knox Cunningham become a Queen's Counsel?",
   "time_constraint": {
     "constraint_type": "none",
@@ -253,6 +258,7 @@ Input: "How many goals did Sherif Ashraf score in the 2008-2009 season?"
 Output:
 ```json
 {
+  "original_question": "How many goals did Sherif Ashraf score in the 2008-2009 season?",
   "question_stem": "How many goals did Sherif Ashraf score?",
   "time_constraint": {
     "constraint_type": "explicit",
@@ -269,6 +275,7 @@ Input: "Did John J. Pettus serve as Governor before the Civil War?"
 Output:
 ```json
 {
+  "original_question": "Did John J. Pettus serve as Governor before the Civil War?",
   "question_stem": "Did John J. Pettus serve as Governor before the Civil War?",
   "time_constraint": {
     "constraint_type": "implicit",
@@ -513,8 +520,8 @@ class QueryParser:
             answer_type = AnswerType.ENTITY
 
         return QueryParseResult(
-            original_question=question,
-            question_stem=data.get("question_stem", question),
+            original_question=data["original_question"],
+            question_stem=data["question_stem"],
             time_constraint=time_constraint,
             event_type=event_type,
             answer_type=answer_type,
