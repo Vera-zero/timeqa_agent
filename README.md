@@ -66,7 +66,7 @@ timeqa_agent/
 │   ├── retriever_cli.py       # 检索器命令行工具
 │   ├── query_parser.py        # 查询解析器（问题主干和时间约束提取）
 │   ├── query_parser_cli.py    # 查询解析器命令行工具
-│   ├── search.py              # 检索语句生成器
+│   ├── search.py              # 检索语句生成器 + 事件结构化器
 │   ├── search_cli.py          # 检索语句生成器命令行工具
 │   ├── pipeline.py            # 抽取流水线
 │   └── retrievers/
@@ -571,15 +571,27 @@ python -m timeqa_agent.query_parser_cli -c configs/timeqa_config.json parse "Whe
 - **单一实体**：直接返回实体名作为检索语句
 - **问题句子**：调用 LLM 生成多层检索语句
 
+**新功能**: 现在支持**生成检索语句后直接执行检索**，一步完成从查询生成到结果获取。
+
+**事件合并功能**: 检索结果会自动将时间线包含的所有事件提取出来，与直接检索到的事件合并去重，提供更完整的事件集合。
+
+**事件结构化功能**: 检索并合并事件后，系统可以自动使用 LLM 将非结构化的事件描述转换为结构化的时间关系（如 `works_for(人物, 组织, 开始时间, 结束时间)`），便于下游应用进行时间推理和知识图谱构建。可通过配置启用/禁用。
+
+#### 基本用法
+
 ```bash
 # 交互式模式
 python -m timeqa_agent.search_cli
 
-# 生成单一实体的检索语句
+# 仅生成检索语句（原有功能）
 python -m timeqa_agent.search_cli generate "Thierry Audel"
-
-# 生成问题句子的检索语句
 python -m timeqa_agent.search_cli generate "Which team did Thierry Audel play for?"
+
+# 生成检索语句并执行检索（新功能）
+python -m timeqa_agent.search_cli retrieve "Which team did Thierry Audel play for?" -g data/timeqa/graph/test.json
+
+# 指定检索模式和数量
+python -m timeqa_agent.search_cli retrieve "Barack Obama" -g data/timeqa/graph/test.json --mode keyword --entity-topk 10 --timeline-topk 15 --event-topk 30
 
 # JSON 格式输出
 python -m timeqa_agent.search_cli generate "Barack Obama" --json
@@ -649,6 +661,291 @@ JSON 格式输出：
   ]
 }
 ```
+
+**检索结果输出示例：**
+
+使用 `retrieve` 命令后，会输出检索到的实体、时间线和事件：
+
+```
+============================================================
+阶段 1: 生成检索语句
+============================================================
+检测到句子/问题，调用 LLM 生成检索语句...
+
+生成的检索语句:
+  实体查询: Thierry Audel, a French professional footballer who plays as a centre back
+  时间线查询: Thierry Audel's football career
+  事件查询: ['Which team did Thierry Audel play for?']
+
+============================================================
+阶段 2: 执行检索（模式: hybrid）
+============================================================
+
+检索实体 (query: 'Thierry Audel, a French professional footballer...', top_k: 5)...
+  检索到 3 个实体
+
+检索时间线 (query: 'Thierry Audel's football career', top_k: 10)...
+  检索到 2 条时间线
+
+检索事件 (queries: 1 条, top_k: 20)...
+  事件查询 1/1: 'Which team did Thierry Audel play for?'
+  检索到 15 个事件（去重后）
+
+============================================================
+阶段 3: 合并时间线中的事件
+============================================================
+  原始事件: 15 个
+  时间线包含事件: 8 个（新增）
+  合并后事件: 23 个（去重）
+
+============================================================
+阶段 4: 事件结构化
+============================================================
+  结构化事件 1/23: Thierry Audel joined FC Metz...
+  结构化事件 2/23: Thierry Audel signed with Lyon...
+  ...
+  已处理 20/23 个事件，提取了 42 条关系
+  原始事件: 23 个
+  抽取关系: 45 条
+
+============================================================
+检索完成
+============================================================
+  实体: 3 个
+  时间线: 2 条
+  直接检索事件: 15 个
+  合并后事件: 23 个
+  结构化关系: 45 条
+
+============================================================
+检索结果汇总
+============================================================
+检索模式: hybrid
+实体数量: 3
+时间线数量: 2
+直接检索事件数量: 15
+合并后事件数量: 23
+
+============================================================
+检索到的实体 (3 个)
+============================================================
+
+1. [Thierry Audel] (score: 0.9234)
+
+2. [Thierry Henry] (score: 0.7123)
+
+3. [FC Metz] (score: 0.6541)
+
+============================================================
+检索到的时间线 (2 条)
+============================================================
+
+1. [Thierry Audel's football career] (score: 0.8765)
+   所属实体: Thierry Audel
+   包含事件: 12 个
+
+2. [Professional career] (score: 0.7543)
+   所属实体: Thierry Audel
+   包含事件: 8 个
+
+============================================================
+直接检索到的事件 (15 个)
+============================================================
+
+1. Thierry Audel joined FC Metz... (score: 0.8932)
+   时间: 2007-01
+
+2. Thierry Audel signed with Lyon... (score: 0.8654)
+   时间: 2010-07
+
+...（省略部分事件）
+
+============================================================
+合并后的所有事件 (23 个)
+包括: 直接检索事件 + 时间线中的事件（已去重）
+============================================================
+
+1. Thierry Audel joined FC Metz... (score: 0.8932)
+   时间: 2007-01
+
+2. Thierry Audel signed with Lyon... (score: 0.8654)
+   时间: 2010-07
+
+3. Thierry Audel made his debut... (来自时间线)
+   时间: 2007-02
+
+4. Thierry Audel scored his first goal... (来自时间线)
+   时间: 2007-05
+
+...（显示所有合并去重后的事件）
+
+============================================================
+提取的结构化关系 (45 条)
+============================================================
+
+1. plays_for(Thierry_Audel, FC_Metz, 2007-01, 2010-06)
+   类型: plays_for
+   主体: Thierry_Audel
+   客体: FC_Metz
+   开始: 2007-01
+   结束: 2010-06
+   置信度: 0.95
+
+2. plays_for(Thierry_Audel, Lyon, 2010-07, 2015-12)
+   类型: plays_for
+   主体: Thierry_Audel
+   客体: Lyon
+   开始: 2010-07
+   结束: 2015-12
+   置信度: 0.92
+
+3. won(Thierry_Audel, Ligue_1_Championship, 2011)
+   类型: won
+   主体: Thierry_Audel
+   客体: Ligue_1_Championship
+   开始: 2011
+   置信度: 0.88
+
+...（显示前20条关系，使用 -v 查看全部）
+
+... 还有 25 条关系未显示
+提示: 使用 --verbose 或 -v 参数查看所有关系
+```
+
+**说明**：
+- **直接检索事件**：使用事件查询语句直接检索到的事件
+- **合并后事件**：包含直接检索事件 + 从时间线中提取的所有事件（已去重）
+- **结构化关系**：从合并后的事件中使用 LLM 抽取的结构化时间关系
+- **来自时间线**：标记表示该事件是从时间线中提取的，而非直接检索得到
+- **去重机制**：基于事件ID进行去重，确保同一事件不会重复出现
+- **置信度**：LLM 对关系抽取的置信度评分（0.0-1.0）
+
+### 检索语句生成器 + 事件过滤
+
+基于问题解析结果生成检索语句，执行检索，并过滤出与问题相关的事件。
+
+#### 完整工作流程
+
+```bash
+# 步骤1: 解析问题，生成问题解析A
+python -m timeqa_agent.query_parser_cli "Which team did Thierry Audel play for in 2013?" \
+  --json > question_analysis.json
+
+# 步骤2: 使用问题主干进行检索，并基于问题解析A过滤结果
+python -m timeqa_agent.search_cli retrieve "Which team did Thierry Audel play for?" \
+  -g data/timeqa/graph/test.json \
+  --question-analysis question_analysis.json \
+  --verbose
+
+# 输出包括:
+# - 检索到的实体、时间线、事件
+# - 结构化的时间关系
+# - 过滤后的相关时间关系（基于问题解析）
+```
+
+#### 单步使用（不进行过滤）
+
+```bash
+# 仅生成检索语句
+python -m timeqa_agent.search_cli generate "Which team did Thierry Audel play for?"
+
+# 检索但不过滤
+python -m timeqa_agent.search_cli retrieve "Thierry Audel" \
+  -g data/timeqa/graph/test.json
+```
+
+#### 配置事件过滤
+
+在配置文件中设置（`configs/timeqa_config.json`）:
+
+```json
+{
+  "query_parser": {
+    "enable_event_structuring": true,
+    "enable_event_filtering": true,
+    "filtering_model": "deepseek-chat",
+    "filtering_temperature": 0.0,
+    "filtering_max_retries": 3,
+    "filtering_timeout": 180
+  }
+}
+```
+
+#### 命令行参数
+
+| 参数 | 说明 |
+|------|------|
+| `--question-analysis <path>`, `-qa <path>` | 问题解析JSON文件路径（用于过滤） |
+| `--mode <hybrid\|keyword\|semantic>` | 检索模式 |
+| `--entity-topk <N>` | 实体检索数量 |
+| `--timeline-topk <N>` | 时间线检索数量 |
+| `--event-topk <N>` | 事件检索数量 |
+| `--verbose`, `-v` | 详细输出 |
+| `--json` | JSON格式输出 |
+
+#### 交互式模式
+
+```bash
+python -m timeqa_agent.search_cli -g data/timeqa/graph/test.json
+
+> question question_analysis.json   # 加载问题解析文件
+> retrieve Which team did Thierry Audel play for?  # 检索并过滤
+```
+
+#### 过滤输出示例
+
+启用事件过滤后，输出会增加第5阶段：
+
+```
+============================================================
+阶段 5: 基于问题解析过滤事件
+============================================================
+  过滤理由: Filtering relations based on 'plays_for' relevance and time overlap with 2013
+  结构化关系: 45 条
+  过滤后保留: 8 条
+  过滤掉: 37 条
+
+============================================================
+检索完成
+============================================================
+  实体: 3 个
+  时间线: 2 条
+  直接检索事件: 15 个
+  合并后事件: 23 个
+  结构化关系: 45 条
+  过滤后关系: 8 条
+
+============================================================
+过滤后的结构化关系 (8 条)
+基于问题: Which team did Thierry Audel play for?
+时间约束: The year 2013
+============================================================
+
+1. plays_for(Thierry Audel, Lyon, 2010-07, 2015-12)
+   类型: plays_for
+   主体: Thierry Audel
+   客体: Lyon
+   开始: 2010-07
+   结束: 2015-12
+   置信度: 0.92
+
+2. plays_for(Thierry Audel, France U21, 2011, 2013)
+   类型: plays_for
+   主体: Thierry Audel
+   客体: France U21
+   开始: 2011
+   结束: 2013
+   置信度: 0.88
+
+...（仅显示与问题相关的关系）
+
+过滤统计: 原始 45 条 → 保留 8 条 → 移除 37 条
+```
+
+**过滤效果说明**：
+- 过滤前有45条结构化关系（包括婚姻、出生、获奖等无关事件）
+- 过滤后仅保留8条与"哪个球队效力"相关的关系
+- 时间约束（2013年）也被考虑，排除了不在该时间段的效力关系
 
 ## 中间文件
 
@@ -735,6 +1032,8 @@ print(parse_result.event_type)  # "interval"
 print(parse_result.answer_type)  # "entity"
 
 # 使用检索语句生成器
+from timeqa_agent.search import SearchQueryGenerator
+
 generator = SearchQueryGenerator()
 
 # 单一实体输入
@@ -748,6 +1047,78 @@ queries = generator.generate_retrieval_queries("Which team did Thierry Audel pla
 print(queries.entity_query)  # "Thierry Audel, a French professional footballer who plays as a centre back"
 print(queries.timeline_query)  # "Thierry Audel's football career"
 print(queries.event_queries)  # ["Which team did Thierry Audel play for?"]
+
+# 生成检索语句并执行检索（新功能）
+from timeqa_agent.graph_store import TimelineGraphStore
+from timeqa_agent.retrievers import HybridRetriever
+from timeqa_agent.embeddings import create_embed_fn
+
+# 初始化图存储
+graph_store = TimelineGraphStore()
+graph_store.load("data/timeqa/graph/test.json")
+
+# 创建嵌入函数（可选）
+embed_fn = create_embed_fn(
+    model_type="contriever",
+    model_name="./models/contriever-msmarco",
+    device="cpu"
+)
+
+# 创建检索器
+retriever = HybridRetriever(graph_store, embed_fn=embed_fn)
+
+# 创建带检索功能的生成器
+generator = SearchQueryGenerator(
+    graph_store=graph_store,
+    retriever=retriever
+)
+
+# 生成检索语句并执行检索
+results = generator.retrieve_with_queries(
+    input_text="Which team did Thierry Audel play for?",
+    retrieval_mode="hybrid",  # hybrid/keyword/semantic
+    entity_top_k=5,
+    timeline_top_k=10,
+    event_top_k=20
+)
+
+# 访问检索结果
+print(f"检索到 {len(results.entities)} 个实体")
+print(f"检索到 {len(results.timelines)} 条时间线")
+print(f"检索到 {len(results.events)} 个事件")
+print(f"合并后共 {len(results.merged_events)} 个事件（包含时间线中的事件）")
+print(f"抽取关系 {len(results.structured_events)} 条（如果启用了事件结构化）")
+
+# 访问具体结果
+for entity in results.entities:
+    print(f"实体: {entity.canonical_name}, score: {entity.score}")
+
+for timeline in results.timelines:
+    print(f"时间线: {timeline.timeline_name}, score: {timeline.score}")
+
+for event in results.events:
+    print(f"直接检索事件: {event.event_description}, score: {event.score}")
+
+# 访问合并后的所有事件（推荐使用）
+for event in results.merged_events:
+    source = "直接检索" if event.score > 0 else "时间线"
+    print(f"事件: {event.event_description}, 来源: {source}")
+
+# 访问结构化关系（如果启用了事件结构化）
+for relation in results.structured_events:
+    # 使用格式化字符串显示
+    print(relation)  # 输出: plays_for(Thierry_Audel, FC_Metz, 2007-01, 2010-06)
+    # 或访问详细信息
+    print(f"  类型: {relation.relation_type}")
+    print(f"  主体: {relation.subject}, 客体: {relation.object_entity}")
+    print(f"  时间: {relation.time_start} ~ {relation.time_end}")
+    print(f"  置信度: {relation.confidence}")
+
+# 转换为字典（用于序列化）
+results_dict = results.to_dict()
+print(f"合并事件数量: {results_dict['summary']['num_merged_events']}")
+print(f"结构化关系数量: {results_dict['summary']['num_structured_relations']}")
+print(json.dumps(results_dict, indent=2, ensure_ascii=False))
 
 # 从检索结果溯源到原始chunks
 from timeqa_agent.retrievers import HybridRetriever
@@ -1372,18 +1743,48 @@ python -m timeqa_agent.event_validator -i data/timeqa/event/test.json -o data/ti
     "base_url": "http://...",     // API 端点
     "temperature": 0,             // 生成温度。默认为 0，保证输出稳定一致
     "max_retries": 3,             // 最大重试次数
-    "timeout": 180                // 请求超时（秒）
+    "timeout": 180,               // 请求超时（秒）
+
+    // 检索语句生成后的检索配置
+    "enable_retrieval": false,    // 是否启用检索阶段（生成检索语句后进行实际检索）
+    "retrieval_mode": "hybrid",   // 检索模式: hybrid, keyword, semantic
+    "entity_top_k": 5,            // 实体检索数量
+    "timeline_top_k": 10,         // 时间线检索数量
+    "event_top_k": 20,            // 事件检索数量
+
+    // 事件结构化配置
+    "enable_event_structuring": true,      // 是否启用事件结构化（将事件转换为结构化关系）
+    "structuring_model": null,             // 结构化使用的 LLM 模型（null 则使用默认 model）
+    "structuring_base_url": null,          // 结构化使用的 API 端点（null 则使用默认 base_url）
+    "structuring_temperature": 0.0,        // 结构化 LLM 温度（建议 0.0 保证稳定）
+    "structuring_batch_size": 20,          // 批处理大小（每处理 N 个事件打印一次进度）
+    "structuring_max_retries": 3,          // API 调用失败重试次数
+    "structuring_timeout": 180             // API 超时时间（秒）
   }
 }
 ```
 
 **参数说明**：
+
 | 参数 | 类型 | 默认值 | 说明 |
 |------|------|--------|------|
 | enabled | bool | true | 是否启用查询解析器。禁用时返回原始问题作为主干 |
 | temperature | float | 0 | 生成温度。建议保持为 0 确保输出稳定 |
+| **enable_retrieval** | **bool** | **false** | **是否在生成检索语句后自动执行检索** |
+| **retrieval_mode** | **str** | **"hybrid"** | **检索模式：hybrid（混合）、keyword（关键词）、semantic（语义）** |
+| **entity_top_k** | **int** | **5** | **实体检索数量** |
+| **timeline_top_k** | **int** | **10** | **时间线检索数量** |
+| **event_top_k** | **int** | **20** | **事件检索数量** |
+| **enable_event_structuring** | **bool** | **true** | **是否启用事件结构化（提取结构化时间关系）** |
+| **structuring_model** | **str/null** | **null** | **结构化使用的 LLM 模型（null 使用默认 model）** |
+| **structuring_base_url** | **str/null** | **null** | **结构化使用的 API 端点（null 使用默认 base_url）** |
+| **structuring_temperature** | **float** | **0.0** | **结构化 LLM 温度（建议 0.0）** |
+| **structuring_batch_size** | **int** | **20** | **批处理进度打印间隔** |
+| **structuring_max_retries** | **int** | **3** | **结构化 API 调用重试次数** |
+| **structuring_timeout** | **int** | **180** | **结构化 API 超时时间（秒）** |
 
 **功能说明**：
+
 查询解析器将用户问题分解为两个部分：
 1. **问题主干**：去除时间约束后的核心问题
 2. **时间约束**：显式（如 "in 2007"）或隐式（如 "during the Beijing Olympics"）
@@ -1392,6 +1793,20 @@ python -m timeqa_agent.event_validator -i data/timeqa/event/test.json -o data/ti
 - **实体查询**：标准化名称 + 简短描述
 - **时间线查询**：时间线名称 + 描述 + 相关实体
 - **事件查询**：将问题转为多个陈述句（基于常识推断可能的答案）
+
+**新增检索功能**：
+- 设置 `enable_retrieval=true` 后，会在生成检索语句后自动调用检索器
+- 分别使用生成的 `entity_query`、`timeline_query`、`event_queries` 进行检索
+- 支持配置不同的检索模式（hybrid/keyword/semantic）
+- 可分别配置实体、时间线、事件的检索数量
+
+**事件结构化功能**：
+- 设置 `enable_event_structuring=true` 后，会在检索并合并事件后自动进行结构化
+- 使用 LLM 将非结构化事件描述转换为结构化时间关系（如 `works_for(人物, 组织, 开始时间, 结束时间)`）
+- 支持多种关系类型：职业关系、家庭关系、体育关系、组织关系等
+- 每个关系包含置信度分数和源事件追溯信息
+- 可通过 `structuring_model` 和 `structuring_base_url` 配置使用不同的 LLM（默认使用与查询解析相同的模型）
+- 适用场景：知识图谱构建、时间推理、关系可视化等
 
 ### 检索器配置 (retriever)
 
@@ -1570,6 +1985,324 @@ for event in results.events[:3]:
 ---
 
 ## 更新日志
+
+### 2026-02-26 - 检索结果事件合并功能
+
+#### 🎯 新增功能
+
+**检索语句生成器 - 事件合并功能**
+
+在使用 `retrieve_with_queries()` 方法执行检索后，系统会自动将时间线中包含的所有事件提取出来，与直接检索到的事件合并去重，提供更完整的事件集合。
+
+#### ✨ 功能特点
+
+1. **自动提取时间线事件**：从检索到的时间线中提取所有包含的事件
+2. **智能去重**：基于事件ID进行去重，确保同一事件不会重复出现
+3. **来源标识**：合并后的事件保留分数信息，方便区分来源（直接检索 vs 时间线提取）
+4. **完整输出**：CLI 和 API 均支持访问合并后的事件列表
+
+#### 📝 修改文件清单
+
+| 文件路径 | 修改内容 | 状态 |
+|---------|---------|------|
+| `timeqa_agent/search.py` | 新增 `RetrievalResults.extract_and_merge_events()` 方法 | ✅ 完成 |
+| `timeqa_agent/search.py` | 修改 `retrieve_with_queries()` 自动调用合并功能 | ✅ 完成 |
+| `timeqa_agent/search_cli.py` | 更新 `print_retrieval_results()` 显示合并事件 | ✅ 完成 |
+| `README.md` | 更新文档说明新功能 | ✅ 完成 |
+
+#### 🚀 使用方式
+
+**Python API**:
+
+```python
+from timeqa_agent.search import SearchQueryGenerator
+from timeqa_agent.graph_store import TimelineGraphStore
+from timeqa_agent.retrievers import HybridRetriever
+
+# 创建生成器（带检索功能）
+generator = SearchQueryGenerator(
+    graph_store=graph_store,
+    retriever=retriever
+)
+
+# 执行检索（自动合并时间线中的事件）
+results = generator.retrieve_with_queries(
+    input_text="Which team did Thierry Audel play for?",
+    retrieval_mode="hybrid",
+    entity_top_k=5,
+    timeline_top_k=10,
+    event_top_k=20
+)
+
+# 访问合并后的事件（推荐）
+print(f"合并后事件数量: {len(results.merged_events)}")
+for event in results.merged_events:
+    source = "直接检索" if event.score > 0 else "时间线"
+    print(f"{event.event_description} (来源: {source})")
+```
+
+**命令行**:
+
+```bash
+# 执行检索（自动显示合并后的事件）
+python -m timeqa_agent.search_cli retrieve "Thierry Audel" -g data/timeqa/graph/test.json
+
+# 输出会显示：
+# - 直接检索事件数量
+# - 合并后事件数量（包含时间线中的事件）
+# - 所有合并去重后的事件列表
+```
+
+#### 📊 输出示例
+
+```
+============================================================
+阶段 3: 合并时间线中的事件
+============================================================
+  原始事件: 15 个
+  时间线包含事件: 8 个（新增）
+  合并后事件: 23 个（去重）
+
+============================================================
+合并后的所有事件 (23 个)
+包括: 直接检索事件 + 时间线中的事件（已去重）
+============================================================
+
+1. Event description... (score: 0.8932)
+2. Event description... (score: 0.7654)
+3. Event description... (来自时间线)
+...
+```
+
+#### 💡 使用场景
+
+- **完整事件集合**：获取与查询相关的所有事件，不仅仅是直接匹配的事件
+- **时间线分析**：自动包含时间线中的所有相关事件，便于理解完整的事件序列
+- **知识发现**：通过时间线关联发现更多相关事件
+
+---
+
+### 2026-02-27 - 事件结构化功能
+
+#### 🎯 新增功能
+
+**检索语句生成器 - 事件结构化功能**
+
+在检索并合并事件后，系统可以自动使用 LLM 将非结构化的事件描述转换为结构化的时间关系，便于下游应用进行时间推理和知识图谱构建。
+
+#### ✨ 功能特点
+
+1. **自动关系抽取**：使用 LLM 从事件描述中识别关系类型
+2. **时间信息保留**：保留每个关系的开始和结束时间
+3. **可配置开关**：通过 `enable_event_structuring` 配置启用/禁用
+4. **多种关系类型**：支持职业关系（works_for, studies_at）、家庭关系（married_to）、体育关系（plays_for）等
+5. **置信度评分**：为每个抽取的关系提供置信度分数
+6. **可追溯性**：保留源事件 ID 和描述，便于验证和调试
+
+#### 📝 修改文件清单
+
+| 文件路径 | 修改内容 | 状态 |
+|---------|---------|------|
+| `timeqa_agent/search.py` | 新增 `StructuredRelation` 数据类 | ✅ 完成 |
+| `timeqa_agent/search.py` | 新增 `EventStructurizer` 类实现 LLM 调用 | ✅ 完成 |
+| `timeqa_agent/search.py` | 添加事件结构化 LLM 提示词 | ✅ 完成 |
+| `timeqa_agent/search.py` | 更新 `RetrievalResults` 包含 `structured_events` 字段 | ✅ 完成 |
+| `timeqa_agent/search.py` | 修改 `retrieve_with_queries()` 添加阶段 4（事件结构化） | ✅ 完成 |
+| `timeqa_agent/search_cli.py` | 更新 `print_retrieval_results()` 显示结构化关系 | ✅ 完成 |
+| `timeqa_agent/config.py` | 已有结构化配置字段（无需修改） | ✅ 完成 |
+| `README.md` | 更新文档说明新功能 | ✅ 完成 |
+
+#### 🚀 使用方式
+
+**Python API**:
+
+```python
+from timeqa_agent.search import SearchQueryGenerator
+from timeqa_agent.graph_store import TimelineGraphStore
+from timeqa_agent.retrievers import HybridRetriever
+from timeqa_agent.config import load_config
+
+# 加载配置（确保 enable_event_structuring 为 true）
+config = load_config()
+config.query_parser.enable_event_structuring = True
+
+# 创建生成器（带检索功能）
+generator = SearchQueryGenerator(
+    config=config.query_parser,
+    graph_store=graph_store,
+    retriever=retriever
+)
+
+# 执行检索（自动进行事件结构化）
+results = generator.retrieve_with_queries(
+    input_text="Which team did Thierry Audel play for?",
+    retrieval_mode="hybrid",
+    entity_top_k=5,
+    timeline_top_k=10,
+    event_top_k=20
+)
+
+# 访问结构化关系
+print(f"抽取的关系数量: {len(results.structured_events)}")
+for relation in results.structured_events:
+    # 使用格式化字符串显示：relation_type(subject, object, start, end)
+    print(relation)
+    # 或访问详细信息
+    print(f"  类型: {relation.relation_type}")
+    print(f"  主体: {relation.subject}")
+    print(f"  客体: {relation.object_entity}")
+    print(f"  时间: {relation.time_start} ~ {relation.time_end}")
+    print(f"  置信度: {relation.confidence}")
+```
+
+**命令行**:
+
+```bash
+# 基本检索（自动显示结构化关系）
+python -m timeqa_agent.search_cli retrieve "Barack Obama" -g data/timeqa/graph/test.json
+
+# 详细输出（显示所有关系和源描述）
+python -m timeqa_agent.search_cli retrieve "Barack Obama" -g data/timeqa/graph/test.json -v
+
+# JSON 输出（包含结构化关系）
+python -m timeqa_agent.search_cli retrieve "Barack Obama" -g data/timeqa/graph/test.json --json
+```
+
+#### ⚙️ 配置选项
+
+在配置文件 `configs/timeqa_config.json` 的 `query_parser` 部分：
+
+```json
+{
+  "query_parser": {
+    "enable_event_structuring": true,
+    "structuring_model": "deepseek-chat",
+    "structuring_base_url": "https://api.deepseek.com/chat/completions",
+    "structuring_temperature": 0.0,
+    "structuring_batch_size": 20,
+    "structuring_max_retries": 3,
+    "structuring_timeout": 180
+  }
+}
+```
+
+**配置说明**：
+- `enable_event_structuring`: 是否启用事件结构化（默认: true）
+- `structuring_model`: LLM 模型名称（默认: 使用 query_parser 的 model）
+- `structuring_base_url`: LLM API 端点（默认: 使用 query_parser 的 base_url）
+- `structuring_temperature`: LLM 温度参数（默认: 0.0，确保输出稳定）
+- `structuring_batch_size`: 批处理大小（默认: 20，每处理 20 个事件打印一次进度）
+- `structuring_max_retries`: API 调用失败重试次数（默认: 3）
+- `structuring_timeout`: API 超时时间（秒，默认: 180）
+
+#### 📊 输出示例
+
+```
+============================================================
+阶段 4: 事件结构化
+============================================================
+  结构化事件 1/23: Jaroslav Pelikan served as Professor at Valparaiso...
+  结构化事件 2/23: Pelikan joined the faculty of the University of...
+  ...
+  已处理 20/23 个事件，提取了 42 条关系
+  原始事件: 23 个
+  抽取关系: 45 条
+
+============================================================
+检索完成
+============================================================
+  实体: 5 个
+  时间线: 10 条
+  直接检索事件: 15 个
+  合并后事件: 23 个
+  结构化关系: 45 条
+
+============================================================
+提取的结构化关系 (45 条)
+============================================================
+
+1. works_for(Jaroslav_Pelikan, Valparaiso_University, 1946-01, 1949-01)
+   类型: works_for
+   主体: Jaroslav_Pelikan
+   客体: Valparaiso_University
+   开始: 1946-01
+   结束: 1949-01
+   置信度: 0.95
+   来源: Jaroslav Pelikan served as Professor at Valparaiso University...
+
+2. serves_as(Jaroslav_Pelikan, Professor, 1946-01, 1949-01)
+   类型: serves_as
+   主体: Jaroslav_Pelikan
+   客体: Professor
+   开始: 1946-01
+   结束: 1949-01
+   置信度: 0.90
+   来源: Jaroslav Pelikan served as Professor at Valparaiso University...
+
+...
+
+... 还有 25 条关系未显示
+提示: 使用 --verbose 或 -v 参数查看所有关系
+```
+
+#### 📋 关系类型参考
+
+系统支持多种预定义的关系类型（也可以由 LLM 自动识别新类型）：
+
+**职业关系**:
+- `works_for(人物, 组织, 开始时间, 结束时间)` - 工作关系
+- `studies_at(人物, 机构, 开始时间, 结束时间)` - 学习关系
+- `serves_as(人物, 职位, 开始时间, 结束时间)` - 担任职务
+- `manages(人物, 组织, 开始时间, 结束时间)` - 管理关系
+
+**家庭关系**:
+- `married_to(人物1, 人物2, 开始时间, 结束时间)` - 婚姻关系
+- `child_of(人物1, 人物2)` - 子女关系
+- `parent_of(人物1, 人物2)` - 父母关系
+- `member_of_family(人物, 家族名称)` - 家族成员
+
+**体育关系**:
+- `plays_for(运动员, 球队, 开始时间, 结束时间)` - 效力关系
+- `coached_by(球队, 教练, 开始时间, 结束时间)` - 执教关系
+- `won(人物/球队, 奖项, 时间)` - 获奖关系
+
+**组织关系**:
+- `leads(人物, 组织, 开始时间, 结束时间)` - 领导关系
+- `founded(人物, 组织, 时间)` - 创立关系
+- `acquired(组织1, 组织2, 时间)` - 收购关系
+- `merged_with(组织1, 组织2, 时间)` - 合并关系
+
+**其他关系**:
+- `located_in(实体, 地点, 开始时间, 结束时间)` - 位置关系
+- `associated_with(实体1, 实体2, 开始时间, 结束时间)` - 关联关系
+- `recognized_as(人物, 成就, 时间)` - 认可关系
+
+#### 💡 使用场景
+
+- **知识图谱构建**：将非结构化文本转换为可查询的三元组
+- **时间推理**：基于结构化的时间关系进行推理（如"谁在2000年为Google工作？"）
+- **关系可视化**：生成实体关系图和时间线图表
+- **数据集成**：导出为标准格式（RDF, JSON-LD）用于其他系统
+
+#### 🔧 禁用结构化功能
+
+如果不需要事件结构化（节省 LLM 调用成本），可以在配置中禁用：
+
+```json
+{
+  "query_parser": {
+    "enable_event_structuring": false
+  }
+}
+```
+
+或在代码中：
+
+```python
+config.query_parser.enable_event_structuring = False
+```
+
+---
 
 ### 2026-02-07 - 检索器系统升级
 

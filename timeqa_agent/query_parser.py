@@ -261,6 +261,50 @@ Question: {question}
 
 Output in JSON format:"""
 
+STRUCTURE_SYSTEM_PROMPT = """You are an expert at converting temporal events into symbolic temporal relations.
+
+Your task: For each event, produce one or more structured relations that capture:
+1) relation (predicate in lower_snake_case)
+2) subject (main entity)
+3) object (secondary entity, if any)
+4) time_start / time_end (use provided values; null if missing)
+
+Rules:
+- Use ONLY the information provided in the event list. Do NOT add new facts.
+- If a clear subject/object is not identifiable, set subject or object to null and use relation="related_to".
+- Prefer a single relation per event unless the event clearly contains multiple distinct relations.
+- Keep time fields as-is (do not re-normalize).
+- Provide a human-readable symbolic string using underscores for multiword names.
+
+Output JSON format:
+{
+  "relations": [
+    {
+      "event_id": "event-0001",
+      "relation": "works_for",
+      "subject": "Jaroslav Pelikan",
+      "object": "Valparaiso University",
+      "time_start": "Jan 1946",
+      "time_end": "Jan 1949",
+      "time_expression": "from Jan, 1946 to Jan, 1949",
+      "entities": ["Jaroslav Pelikan", "Valparaiso University"],
+      "evidence": "Original sentence or event description",
+      "symbolic": "works_for(Jaroslav_Pelikan, Valparaiso_University, Jan_1946, Jan_1949)"
+    }
+  ]
+}
+"""
+
+STRUCTURE_USER_PROMPT = """Convert the following events into symbolic temporal relations.
+
+Question (optional):
+{question}
+
+Events (JSON):
+{events_json}
+
+Output JSON:"""
+
 
 class QueryParser:
     """查询解析器
@@ -329,6 +373,157 @@ class QueryParser:
                 return json.loads(match.group(1))
             else:
                 raise ValueError(f"无法解析 JSON 响应: {content[:200]}")
+
+    def _call_api_with_config(
+        self,
+        messages: List[dict],
+        model: str,
+        base_url: str,
+        temperature: float,
+        max_retries: int,
+        timeout: int,
+    ) -> str:
+        """Call LLM API with explicit configuration."""
+        payload = {
+            "model": model,
+            "messages": messages,
+            "temperature": temperature,
+            "response_format": {"type": "json_object"},
+        }
+
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {self.token}",
+        }
+
+        for attempt in range(max_retries):
+            try:
+                response = requests.post(
+                    base_url,
+                    headers=headers,
+                    data=json.dumps(payload),
+                    timeout=timeout,
+                )
+
+                if response.status_code != 200:
+                    raise Exception(f"API call failed: {response.status_code} - {response.text}")
+
+                result = response.json()
+                return result["choices"][0]["message"]["content"]
+            except Exception as e:
+                if attempt == max_retries - 1:
+                    raise
+                print(f"API call failed, retry {attempt + 1}/{max_retries}: {e}")
+
+        return ""
+
+    def _format_events_for_structuring(self, events: List[Any]) -> List[Dict[str, Any]]:
+        """Prepare event records for structuring prompt."""
+        formatted = []
+        for idx, event in enumerate(events):
+            if isinstance(event, dict):
+                data = event
+            elif hasattr(event, "to_dict"):
+                data = event.to_dict()
+            else:
+                data = {}
+
+            event_id = data.get("event_id") or data.get("node_id") or f"event-{idx:04d}"
+
+            entity_names = data.get("entity_names")
+            if not entity_names:
+                entities = data.get("entities") or []
+                names = []
+                if isinstance(entities, list):
+                    for ent in entities:
+                        if isinstance(ent, dict):
+                            name = ent.get("canonical_name") or ent.get("name")
+                        else:
+                            name = getattr(ent, "canonical_name", None) or getattr(ent, "name", None)
+                        if name:
+                            names.append(name)
+                entity_names = names
+
+            if not isinstance(entity_names, list):
+                entity_names = [entity_names] if entity_names else []
+
+            formatted.append({
+                "event_id": event_id,
+                "event_description": data.get("event_description", "") or data.get("description", ""),
+                "time_start": data.get("time_start"),
+                "time_end": data.get("time_end"),
+                "time_expression": data.get("time_expression", ""),
+                "entity_names": entity_names,
+                "original_sentence": data.get("original_sentence", ""),
+            })
+
+        return formatted
+
+    def structure_events(
+        self,
+        events: List[Any],
+        question: Optional[str] = None,
+        batch_size: Optional[int] = None,
+    ) -> List[Dict[str, Any]]:
+        """
+        Structure merged events into symbolic relations using LLM.
+
+        Args:
+            events: event list (EventResult or dict)
+            question: optional original question/input text
+            batch_size: optional override for batch size
+
+        Returns:
+            List of structured relations
+        """
+        if not events:
+            return []
+
+        if not self.config.enable_event_structuring:
+            return []
+
+        event_records = self._format_events_for_structuring(events)
+        if not event_records:
+            return []
+
+        effective_batch_size = batch_size or self.config.structuring_batch_size
+        if not effective_batch_size or effective_batch_size <= 0:
+            effective_batch_size = len(event_records)
+
+        model = self.config.structuring_model or self.config.model
+        base_url = self.config.structuring_base_url or self.config.base_url
+        temperature = self.config.structuring_temperature
+        max_retries = self.config.structuring_max_retries
+        timeout = self.config.structuring_timeout
+
+        all_relations: List[Dict[str, Any]] = []
+
+        for start in range(0, len(event_records), effective_batch_size):
+            batch = event_records[start:start + effective_batch_size]
+            events_json = json.dumps(batch, ensure_ascii=False, indent=2)
+            user_prompt = STRUCTURE_USER_PROMPT.format(
+                question=question or "",
+                events_json=events_json,
+            )
+            messages = [
+                {"role": "system", "content": STRUCTURE_SYSTEM_PROMPT},
+                {"role": "user", "content": user_prompt},
+            ]
+
+            content = self._call_api_with_config(
+                messages=messages,
+                model=model,
+                base_url=base_url,
+                temperature=temperature,
+                max_retries=max_retries,
+                timeout=timeout,
+            )
+            data = self._parse_json_response(content)
+            relations = data.get("relations", [])
+            if isinstance(relations, list):
+                all_relations.extend(relations)
+
+        return all_relations
 
     def parse_question(self, question: str) -> QueryParseResult:
         """

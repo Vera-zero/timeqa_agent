@@ -34,26 +34,26 @@ class PriorEventsContextMode(str, Enum):
 class ChunkConfig:
     """分块配置"""
     strategy: ChunkStrategy = ChunkStrategy.FIXED_SIZE
-    
+
     # 固定大小分块参数
     chunk_size: int = 1500         # 分块大小（字符数）
     chunk_overlap: int = 100       # 重叠大小（字符数）
-    
+
     # 句子分块参数
     max_sentences: int = 10        # 每个分块最大句子数
     sentence_overlap: int = 2      # 重叠句子数
     min_chunk_size: int = 500      # 最小分块大小（字符数）
     max_chunk_size: int = 2000     # 最大分块大小（字符数）
-    
+
     # 通用参数
     preserve_sentences: bool = True  # 固定大小分块时是否尽量保持句子完整
-    
+
     def to_dict(self) -> Dict[str, Any]:
         """转换为字典"""
         d = asdict(self)
         d["strategy"] = self.strategy.value
         return d
-    
+
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "ChunkConfig":
         """从字典创建"""
@@ -146,17 +146,17 @@ class DisambiguatorConfig:
 
     # 本地模型配置
     local_embed_model_path: Optional[str] = "d:/Verause/science/codes/models/bge_m3/bge_m3"  # 本地模型路径
-    
+
     # 相似度阈值
     similarity_threshold: float = 0.85  # 高于此阈值认为是同一实体
-    
+
     # 文本拼接权重（用于生成 embedding 文本）
     canonical_name_weight: float = 2.0  # canonical_name 重复次数（增加权重）
-    
+
     def to_dict(self) -> Dict[str, Any]:
         """转换为字典"""
         return asdict(self)
-    
+
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "DisambiguatorConfig":
         """从字典创建"""
@@ -203,6 +203,30 @@ class QueryParserConfig:
     max_retries: int = 3
     timeout: int = 180
 
+    # 检索语句生成后的检索配置
+    enable_retrieval: bool = False           # 是否启用检索阶段（生成检索语句后进行实际检索）
+    retrieval_mode: str = "hybrid"           # 检索模式: hybrid, keyword, semantic
+    entity_top_k: int = 5                    # 实体检索数量
+    timeline_top_k: int = 10                 # 时间线检索数量
+    event_top_k: int = 20                    # 事件检索数量
+
+    # 事件结构化配置（融合检索事件转换为结构化事件作为上下文）
+    enable_event_structuring: bool = True
+    structuring_model: Optional[str] = None
+    structuring_base_url: Optional[str] = None
+    structuring_temperature: float = 0.0
+    structuring_max_retries: int = 3
+    structuring_timeout: int = 180
+    structuring_batch_size: int = 20
+
+    # 事件过滤配置（基于问题解析过滤结构化事件）
+    enable_event_filtering: bool = True              # 是否启用事件过滤
+    filtering_model: Optional[str] = None            # 过滤使用的模型（None则使用默认model）
+    filtering_base_url: Optional[str] = None         # 过滤使用的API地址（None则使用默认base_url）
+    filtering_temperature: float = 0.0               # 过滤温度参数
+    filtering_max_retries: int = 3                   # 过滤API最大重试次数
+    filtering_timeout: int = 180                     # 过滤API超时时间
+
     def to_dict(self) -> Dict[str, Any]:
         """转换为字典"""
         return asdict(self)
@@ -219,11 +243,11 @@ class GraphStoreConfig:
     store_original_sentence: bool = True   # 是否存储原始句子
     store_chunk_metadata: bool = True      # 是否存储分块元数据
     store_entity_aliases: bool = True      # 是否存储实体别名
-    
+
     def to_dict(self) -> Dict[str, Any]:
         """转换为字典"""
         return asdict(self)
-    
+
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "GraphStoreConfig":
         """从字典创建"""
@@ -253,39 +277,39 @@ class VotingConfig:
     entity_layer_weight: float = 0.25      # 实体层权重
     timeline_layer_weight: float = 0.30    # 时间线层权重
     event_layer_weight: float = 0.45       # 事件层权重
-    
+
     # 衰减因子（从高层传播到事件）
     entity_decay_factor: float = 0.7       # 实体到事件的衰减
     timeline_decay_factor: float = 0.9     # 时间线到事件的衰减
-    
+
     # 融合算法
     fusion_mode: VotingFusionMode = VotingFusionMode.RRF
     rrf_k: int = 60                        # RRF 参数
-    
+
     # 投票阈值
     min_votes: int = 1                     # 最少投票数
     min_score: float = 0.0                 # 最低聚合分数
-    
+
     # 各层检索数量倍数（相对于 top_k）
     entity_retrieve_multiplier: float = 2.0
     timeline_retrieve_multiplier: float = 2.0
     event_retrieve_multiplier: float = 2.0
-    
+
     # 是否启用各层
     enable_entity_layer: bool = True
     enable_timeline_layer: bool = True
     enable_event_layer: bool = True
-    
+
     # 投票计数模式的参数
     vote_count_alpha: float = 0.3          # 投票数权重
     vote_count_beta: float = 0.7           # 平均分数权重
-    
+
     def to_dict(self) -> Dict[str, Any]:
         """转换为字典"""
         d = asdict(self)
         d["fusion_mode"] = self.fusion_mode.value
         return d
-    
+
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "VotingConfig":
         """从字典创建"""
@@ -345,7 +369,7 @@ class VectorMetric(str, Enum):
     IP = "ip"          # 内积
 
 
-# 默认停用词
+# 默认停用�?
 DEFAULT_STOPWORDS = frozenset({
     "the", "a", "an", "is", "are", "was", "were", "be", "been",
     "being", "have", "has", "had", "do", "does", "did", "will",
@@ -420,28 +444,28 @@ class RetrieverConfig:
     rrf_k: float = 60.0                      # RRF 参数
     enable_keyword: bool = True              # 启用关键词检索
     enable_semantic: bool = True             # 启用语义检索
-    
+
     def to_dict(self) -> Dict[str, Any]:
         """转换为字典"""
         return asdict(self)
-    
+
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "RetrieverConfig":
         """从字典创建"""
         return cls(**data)
-    
+
     def get_fusion_mode(self) -> FusionMode:
         """获取融合模式枚举"""
         return FusionMode(self.fusion_mode)
-    
+
     def get_vector_index_type(self) -> VectorIndexType:
         """获取向量索引类型枚举"""
         return VectorIndexType(self.vector_index_type)
-    
+
     def get_vector_metric(self) -> VectorMetric:
         """获取向量距离度量枚举"""
         return VectorMetric(self.vector_metric)
-    
+
     def get_stopwords(self) -> frozenset:
         """获取停用词集合"""
         return DEFAULT_STOPWORDS
@@ -505,19 +529,19 @@ class TimeQAConfig:
             corpus_dir=data.get("corpus_dir", "data/timeqa/corpus"),
             output_dir=data.get("output_dir", "data/timeqa/processed"),
         )
-    
+
     def save(self, path: str) -> None:
         """保存配置到文件"""
         with open(path, "w", encoding="utf-8") as f:
             json.dump(self.to_dict(), f, indent=2, ensure_ascii=False)
-    
+
     @classmethod
     def load(cls, path: str) -> "TimeQAConfig":
         """从文件加载配置"""
         with open(path, "r", encoding="utf-8") as f:
             data = json.load(f)
         return cls.from_dict(data)
-    
+
     @classmethod
     def load_or_default(cls, path: str) -> "TimeQAConfig":
         """从文件加载配置，如果不存在则返回默认配置"""
@@ -537,7 +561,7 @@ def get_default_config() -> TimeQAConfig:
 
 def load_config(path: Optional[str] = None) -> TimeQAConfig:
     """加载配置
-    
+
     优先级：
     1. 如果指定了 path，从该路径加载
     2. 否则尝试从默认配置文件加载
