@@ -596,6 +596,12 @@ python -m timeqa_agent.search_cli retrieve "Barack Obama" -g data/timeqa/graph/t
 # JSON 格式输出
 python -m timeqa_agent.search_cli generate "Barack Obama" --json
 
+# 保存测试结果到文件（用于测试）
+python -m timeqa_agent.search_cli retrieve "Which team did Thierry Audel play for?" -g data/timeqa/graph/test.json --save
+
+# 指定输出文件路径
+python -m timeqa_agent.search_cli retrieve "Barack Obama" -g data/timeqa/graph/test.json --save --output my_results.json
+
 # 使用指定配置文件
 python -m timeqa_agent.search_cli -c configs/timeqa_config.json generate "Who was Anna Karina married to?"
 ```

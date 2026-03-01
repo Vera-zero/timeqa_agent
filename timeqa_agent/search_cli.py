@@ -13,6 +13,7 @@ import json
 import sys
 from pathlib import Path
 from typing import Optional
+from datetime import datetime
 
 from .config import load_config
 from .search import SearchQueryGenerator, RetrievalQueries, RetrievalResults
@@ -24,6 +25,70 @@ from .query_parser import QueryParseResult
 def print_json(data, indent: int = 2):
     """格式化打印 JSON"""
     print(json.dumps(data, ensure_ascii=False, indent=indent))
+
+
+def save_results_to_json(
+    input_text: str,
+    command: str,
+    queries: Optional[RetrievalQueries] = None,
+    results: Optional[RetrievalResults] = None,
+    output_file: str = "search_result.json",
+    retrieval_params: Optional[dict] = None,
+):
+    """将处理结果保存到 JSON 文件
+
+    Args:
+        input_text: 输入文本
+        command: 执行的命令（generate 或 retrieve）
+        queries: 检索语句对象
+        results: 检索结果对象
+        output_file: 输出文件路径
+        retrieval_params: 检索参数（模式、top_k等）
+    """
+    # 构建保存的数据结构
+    save_data = {
+        "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "command": command,
+        "input_text": input_text,
+    }
+
+    # 添加检索参数（如果有）
+    if retrieval_params:
+        save_data["retrieval_params"] = retrieval_params
+
+    # 添加检索语句
+    if queries:
+        save_data["queries"] = queries.to_dict()
+
+    # 添加检索结果
+    if results:
+        save_data["results"] = results.to_dict()
+
+    # 检查文件是否存在，如果存在则读取现有数据
+    output_path = Path(output_file)
+    existing_data = []
+
+    if output_path.exists():
+        try:
+            with open(output_path, 'r', encoding='utf-8') as f:
+                existing_data = json.load(f)
+                # 如果文件中的数据不是列表，则转换为列表
+                if not isinstance(existing_data, list):
+                    existing_data = [existing_data]
+        except Exception as e:
+            print(f"警告: 读取现有结果文件失败: {e}，将创建新文件")
+            existing_data = []
+
+    # 追加新数据
+    existing_data.append(save_data)
+
+    # 保存到文件
+    try:
+        with open(output_path, 'w', encoding='utf-8') as f:
+            json.dump(existing_data, f, ensure_ascii=False, indent=2)
+        print(f"\n✓ 结果已保存到: {output_path}")
+    except Exception as e:
+        print(f"\n✗ 保存结果失败: {e}")
 
 
 def print_retrieval_queries(queries: RetrievalQueries, verbose: bool = False):
@@ -218,6 +283,8 @@ class SearchCLI:
         graph_path: Optional[str] = None,
         verbose: bool = False,
         enable_retrieval: bool = False,
+        save_results: bool = False,
+        output_file: str = "search_result.json",
     ):
         """初始化命令行工具
 
@@ -226,9 +293,13 @@ class SearchCLI:
             graph_path: 图文件路径（用于检索）
             verbose: 是否详细输出
             enable_retrieval: 是否启用检索功能
+            save_results: 是否保存结果到JSON文件
+            output_file: 结果输出文件路径
         """
         self.verbose = verbose
         self.enable_retrieval = enable_retrieval
+        self.save_results = save_results
+        self.output_file = output_file
 
         # 加载配置
         self.config = load_config(config_path) if config_path else load_config()
@@ -323,7 +394,18 @@ class SearchCLI:
 
     def cmd_generate(self, input_text: str) -> RetrievalQueries:
         """生成检索语句"""
-        return self.generator.generate_retrieval_queries(input_text)
+        queries = self.generator.generate_retrieval_queries(input_text)
+
+        # 保存结果到JSON文件（如果启用）
+        if self.save_results:
+            save_results_to_json(
+                input_text=input_text,
+                command="generate",
+                queries=queries,
+                output_file=self.output_file,
+            )
+
+        return queries
 
     def cmd_retrieve(
         self,
@@ -356,7 +438,7 @@ class SearchCLI:
         timeline_top_k = timeline_top_k or self.config.query_parser.timeline_top_k
         event_top_k = event_top_k or self.config.query_parser.event_top_k
 
-        return self.generator.retrieve_with_queries(
+        results = self.generator.retrieve_with_queries(
             input_text=input_text,
             retrieval_mode=retrieval_mode,
             entity_top_k=entity_top_k,
@@ -364,6 +446,28 @@ class SearchCLI:
             event_top_k=event_top_k,
             question_analysis=question_analysis,
         )
+
+        # 保存结果到JSON文件（如果启用）
+        if self.save_results:
+            retrieval_params = {
+                "retrieval_mode": retrieval_mode,
+                "entity_top_k": entity_top_k,
+                "timeline_top_k": timeline_top_k,
+                "event_top_k": event_top_k,
+            }
+            if question_analysis_path:
+                retrieval_params["question_analysis_path"] = question_analysis_path
+
+            save_results_to_json(
+                input_text=input_text,
+                command="retrieve",
+                queries=results.queries if hasattr(results, 'queries') else None,
+                results=results,
+                output_file=self.output_file,
+                retrieval_params=retrieval_params,
+            )
+
+        return results
 
     def interactive(self):
         """交互式模式"""
@@ -375,6 +479,8 @@ class SearchCLI:
         print("  - 输入问题句子（如 'Which team did he play for?'）：生成多层检索语句")
         if self.enable_retrieval:
             print("  - 检索功能已启用")
+        if self.save_results:
+            print(f"  - 结果保存已启用（输出文件: {self.output_file}）")
         print("\n命令:")
         print("  generate <输入>      - 仅生成检索语句")
         if self.enable_retrieval:
@@ -382,6 +488,7 @@ class SearchCLI:
             print("  mode <hybrid|keyword|semantic>  - 设置检索模式")
             print("  topk <实体数> <时间线数> <事件数>  - 设置各层检索数量")
             print("  question <path>      - 加载问题解析JSON文件（用于过滤）")
+        print("  save                 - 切换结果保存功能")
         print("  verbose              - 切换详细输出")
         print("  json                 - 切换 JSON 输出模式")
         print("  help                 - 显示帮助")
@@ -414,6 +521,11 @@ class SearchCLI:
                 elif cmd == "verbose":
                     self.verbose = not self.verbose
                     print(f"详细输出: {'开启' if self.verbose else '关闭'}")
+                elif cmd == "save":
+                    self.save_results = not self.save_results
+                    print(f"结果保存: {'开启' if self.save_results else '关闭'}")
+                    if self.save_results:
+                        print(f"输出文件: {self.output_file}")
                 elif cmd == "json":
                     json_mode = not json_mode
                     print(f"JSON 输出: {'开启' if json_mode else '关闭'}")
@@ -512,6 +624,12 @@ def main():
   # JSON 格式输出
   python -m timeqa_agent.search_cli generate "Barack Obama" --json
 
+  # 保存测试结果到文件
+  python -m timeqa_agent.search_cli retrieve "Who was Anna Karina married to?" -g data/timeqa/graph/test.json --save
+
+  # 指定输出文件路径
+  python -m timeqa_agent.search_cli retrieve "Barack Obama" -g data/timeqa/graph/test.json --save --output my_results.json
+
   # 使用指定配置文件
   python -m timeqa_agent.search_cli -c configs/timeqa_config.json generate "Who was Anna Karina married to?"
 """
@@ -581,6 +699,18 @@ def main():
         help="详细输出"
     )
 
+    parser.add_argument(
+        "--save",
+        action="store_true",
+        help="将处理结果保存到JSON文件（用于测试）"
+    )
+
+    parser.add_argument(
+        "--output",
+        default="search_result.json",
+        help="结果输出文件路径（默认: search_result.json）"
+    )
+
     args = parser.parse_args()
 
     # 判断是否需要启用检索功能
@@ -591,6 +721,8 @@ def main():
         graph_path=args.graph,
         verbose=args.verbose,
         enable_retrieval=enable_retrieval,
+        save_results=args.save,
+        output_file=args.output,
     )
 
     cmd = args.command.lower()

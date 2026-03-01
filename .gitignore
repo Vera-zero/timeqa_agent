@@ -5,6 +5,7 @@ __pycache__/
 
 # C extensions
 *.so
+search_result.json
 question_analysis.json
 # Distribution / packaging
 .Python
