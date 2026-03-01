@@ -1118,6 +1118,218 @@ pyllm 工具复用 `query_parser` 配置中的 LLM API 参数：
 - `0.7`: 平衡创造性和稳定性（推荐）
 - `1.0`: 更有创造性，但可能不够稳定
 
+### 任务规划 (query.py)
+
+任务规划模块将复杂的时间问题分解为可执行的子任务序列，每个子任务使用一个工具（Search、Python）或不使用工具（NULL）。
+
+#### 主要功能
+
+- **查询解析**: 自动调用 QueryParser 提取问题主干和时间约束
+- **任务分解**: 使用 LLM 将问题分解为逻辑子任务序列
+- **工具分配**: 为每个子任务选择合适的工具（Search/Python/NULL）
+- **依赖管理**: 自动处理子任务之间的依赖关系
+- **结果保存**: 支持将任务规划结果保存到 JSON 文件
+
+#### 命令行使用
+
+```bash
+# 交互式模式
+python -m timeqa_agent.query_cli
+
+# 规划单个查询
+python -m timeqa_agent.query_cli plan "Which team did Thierry Audel play for in 2013?"
+
+# JSON 格式输出
+python -m timeqa_agent.query_cli plan "Who was Anna Karina married to?" --json
+
+# 保存结果到指定文件
+python -m timeqa_agent.query_cli plan "How many goals did he score?" --save --output my_plan.json
+
+# 使用指定配置文件
+python -m timeqa_agent.query_cli -c configs/timeqa_config.json plan "When did he graduate?"
+
+# 详细输出（包含推理信息）
+python -m timeqa_agent.query_cli plan "Query question" -v
+```
+
+#### Python API 使用
+
+```python
+from timeqa_agent.query import TaskPlanner
+from timeqa_agent.config import load_config
+
+# 加载配置
+config = load_config()
+
+# 创建任务规划器
+planner = TaskPlanner(config.query_parser)
+
+# 规划任务
+task_plan = planner.plan_tasks(
+    query="Which team did Thierry Audel play for in 2013?"
+)
+
+# 访问规划结果
+print(f"Original Query: {task_plan.original_query}")
+print(f"Total Subtasks: {task_plan.total_tasks}")
+
+# 遍历子任务
+for task in task_plan.subtasks:
+    print(f"\n[{task.task_id}] {task.question}")
+    print(f"  Tool: {task.tool}")
+    print(f"  Parameters: {task.tool_params}")
+    print(f"  Depends On: {task.depends_on}")
+    if task.reasoning:
+        print(f"  Reasoning: {task.reasoning}")
+
+# 保存为 JSON
+task_plan_dict = task_plan.to_dict()
+```
+
+#### 数据结构
+
+**SubTask（子任务）**：
+- `task_id`: 任务唯一标识（如 "task-001"）
+- `question`: 子任务问题描述
+- `tool`: 使用的工具（"Search" | "Python" | "NULL"）
+- `tool_params`: 工具参数字典
+- `depends_on`: 依赖的前置任务 ID 列表
+- `reasoning`: 任务规划推理（为何需要这个子任务）
+
+**TaskPlan（任务规划）**：
+- `original_query`: 原始查询问题
+- `query_analysis`: 查询解析结果（QueryParseResult）
+- `subtasks`: 子任务列表
+- `total_tasks`: 总任务数
+- `timestamp`: 规划生成时间戳
+
+#### 输出示例
+
+```
+Task Planning Result
+============================================================
+
+Original Query: Which team did Thierry Audel play for in 2013?
+Total Subtasks: 3
+
+Query Analysis:
+  Question Stem: Which team did Thierry Audel play for?
+  Time Constraint: explicit
+    - The year 2013
+  Event Type: interval
+  Answer Type: entity
+
+============================================================
+Subtasks
+============================================================
+
+[task-001] Retrieve the career timeline of Thierry Audel
+  Tool: Search
+  Parameters:
+    - query: Thierry Audel career
+    - target_type: timeline
+
+[task-002] Filter timeline events to find team affiliation in 2013
+  Tool: Python
+  Parameters:
+    - code_description: Extract events from task-001 timeline where time period includes 2013 and event describes team affiliation
+    - input_data: timeline from task-001
+  Depends On: task-001
+
+[task-003] Extract the team name from filtered results
+  Tool: NULL
+  Depends On: task-002
+```
+
+#### 交互式模式命令
+
+进入交互式模式后可用的命令：
+
+| 命令 | 说明 |
+|------|------|
+| `<query>` | 规划任务 |
+| `verbose` | 切换详细输出 |
+| `json` | 切换 JSON 输出模式 |
+| `save` | 切换自动保存结果 |
+| `help` | 显示帮助 |
+| `quit/exit` | 退出 |
+
+#### 命令行参数
+
+| 参数 | 简写 | 说明 | 默认值 |
+|------|------|------|--------|
+| --config | -c | 配置文件路径 | None |
+| command | | 命令：plan, interactive | interactive |
+| query | | 查询问题 | None |
+| --json | | JSON 格式输出 | false |
+| --save | | 保存结果到文件 | false |
+| --output | | 输出文件路径 | query_plan_result.json |
+| --verbose | -v | 详细输出 | false |
+
+#### 输出文件
+
+任务规划结果默认保存到 `data/query_plans/task_plan_{timestamp}.json`，包含：
+
+```json
+{
+  "original_query": "Which team did Thierry Audel play for in 2013?",
+  "query_analysis": {
+    "original_question": "...",
+    "question_stem": "...",
+    "time_constraint": {...},
+    "event_type": "interval",
+    "answer_type": "entity"
+  },
+  "subtasks": [
+    {
+      "task_id": "task-001",
+      "question": "Retrieve the career timeline of Thierry Audel",
+      "tool": "Search",
+      "tool_params": {
+        "query": "Thierry Audel career",
+        "target_type": "timeline"
+      },
+      "depends_on": [],
+      "reasoning": "Need to get the complete career history to find teams played for"
+    }
+  ],
+  "total_tasks": 3,
+  "timestamp": "2026-03-01T12:30:00.123456"
+}
+```
+
+#### 工具说明
+
+**Search 工具**：
+- 用途：从知识库中检索实体、时间线、事件
+- 参数：`query`（查询文本）、`target_type`（entity/timeline/event）、`time_constraint`（时间约束）
+
+**Python 工具**：
+- 用途：数据处理、时间推理、计算聚合
+- 参数：`code_description`（代码功能描述）、`input_data`（输入数据来源）
+
+**NULL 工具**：
+- 用途：推理或综合步骤，不需要工具执行
+- 使用场景：最终答案综合、逻辑推理步骤
+
+#### 配置说明
+
+任务规划模块复用 `query_parser` 配置中的 LLM API 参数：
+
+```json
+{
+  "query_parser": {
+    "model": "deepseek-chat",
+    "base_url": "https://api.deepseek.com/chat/completions",
+    "temperature": 0,
+    "max_retries": 3,
+    "timeout": 180
+  }
+}
+```
+
+**注意**：建议保持 `temperature=0` 以确保任务规划结果稳定一致。
+
 ## 中间文件
 
 每个阶段的输出会保存到对应目录：
