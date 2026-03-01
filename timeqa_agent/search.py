@@ -795,76 +795,76 @@ Output in JSON format:"""
 # 事件结构化 Prompt
 # ============================================================
 
-EVENT_STRUCTURIZATION_SYSTEM_PROMPT = """你是一位时间关系提取专家。你的任务是从事件描述中提取结构化的时间关系。
+EVENT_STRUCTURIZATION_SYSTEM_PROMPT = """You are an expert in temporal relation extraction. Your task is to extract structured temporal relations from event descriptions.
 
-## 关系类型（非详尽列表）
+## Relation Types (Non-exhaustive List)
 
-常见的时间关系类型包括：
+Common temporal relation types include:
 
-- **职业关系**:
-  - works_for(人物, 组织, 开始时间, 结束时间) - 工作关系
-  - studies_at(人物, 机构, 开始时间, 结束时间) - 学习关系
-  - serves_as(人物, 职位, 开始时间, 结束时间) - 担任职务
-  - manages(人物, 组织, 开始时间, 结束时间) - 管理关系
+- **Professional Relations**:
+  - works_for(person, organization, start_time, end_time) - Employment relation
+  - studies_at(person, institution, start_time, end_time) - Education relation
+  - serves_as(person, position, start_time, end_time) - Position holding
+  - manages(person, organization, start_time, end_time) - Management relation
 
-- **家庭关系**:
-  - married_to(人物1, 人物2, 开始时间, 结束时间) - 婚姻关系
-  - child_of(人物1, 人物2) - 子女关系
-  - parent_of(人物1, 人物2) - 父母关系
-  - member_of_family(人物, 家族名称) - 家族成员
+- **Family Relations**:
+  - married_to(person1, person2, start_time, end_time) - Marriage relation
+  - child_of(person1, person2) - Parent-child relation
+  - parent_of(person1, person2) - Parent relation
+  - member_of_family(person, family_name) - Family membership
 
-- **组织关系**:
-  - leads(人物, 组织, 开始时间, 结束时间) - 领导关系
-  - founded(人物, 组织, 时间) - 创立关系
-  - acquired(组织1, 组织2, 时间) - 收购关系
-  - merged_with(组织1, 组织2, 时间) - 合并关系
+- **Organizational Relations**:
+  - leads(person, organization, start_time, end_time) - Leadership relation
+  - founded(person, organization, time) - Foundation relation
+  - acquired(organization1, organization2, time) - Acquisition relation
+  - merged_with(organization1, organization2, time) - Merger relation
 
-- **体育关系**:
-  - plays_for(运动员, 球队, 开始时间, 结束时间) - 效力关系
-  - coached_by(球队, 教练, 开始时间, 结束时间) - 执教关系
-  - won(人物/球队, 奖项, 时间) - 获奖关系
+- **Sports Relations**:
+  - plays_for(athlete, team, start_time, end_time) - Team membership
+  - coached_by(team, coach, start_time, end_time) - Coaching relation
+  - won(person/team, award, time) - Award winning
 
-- **其他关系**:
-  - located_in(实体, 地点, 开始时间, 结束时间) - 位置关系
-  - associated_with(实体1, 实体2, 开始时间, 结束时间) - 关联关系
-  - recognized_as(人物, 成就, 时间) - 认可关系
+- **Other Relations**:
+  - located_in(entity, location, start_time, end_time) - Location relation
+  - associated_with(entity1, entity2, start_time, end_time) - Association relation
+  - recognized_as(person, achievement, time) - Recognition relation
 
-## 提取规则
+## Extraction Rules
 
-1. **准确性**: 只提取事件描述中明确陈述或强烈暗示的关系
-2. **实体规范化**: 使用规范/标准名称表示实体。如果使用代词，将其解析为实际的实体名称
-3. **时间信息**:
-   - 提取 time_start 和 time_end（如果都可用）
-   - 对于时间点事件，只使用 time_start
-   - 对于时间段事件，同时使用 time_start 和 time_end
-4. **置信度**: 根据关系的清晰度分配置信度：
-   - 1.0: 明确、无歧义的关系
-   - 0.8: 隐含但强烈暗示的关系
-   - 0.6: 可能但不太确定的关系
-5. **多重关系**: 如果一个事件描述了多个关系，提取所有关系
-6. **最少关系**: 在没有充分证据的情况下，不要创建关系
-7. **关系类型选择**: 选择最具体的、最适合该事件的关系类型
-8. **时间格式**: 保持与原始事件相同的时间格式（YYYY, YYYY-MM, 或 YYYY-MM-DD）
+1. **Accuracy**: Only extract relations that are explicitly stated or strongly implied in the event description
+2. **Entity Normalization**: Use canonical/standard names for entities. If pronouns are used, resolve them to actual entity names
+3. **Temporal Information**:
+   - Extract both time_start and time_end (if both are available)
+   - For point-in-time events, use only time_start
+   - For interval events, use both time_start and time_end
+4. **Confidence**: Assign confidence based on the clarity of the relation:
+   - 1.0: Explicit, unambiguous relation
+   - 0.8: Implicit but strongly implied relation
+   - 0.6: Possible but uncertain relation
+5. **Multiple Relations**: If an event describes multiple relations, extract all of them
+6. **Minimal Relations**: Do not create relations without sufficient evidence
+7. **Relation Type Selection**: Choose the most specific and appropriate relation type for the event
+8. **Time Format**: Maintain the same time format as the original event (YYYY, YYYY-MM, or YYYY-MM-DD)
 
-## 输出格式
+## Output Format
 
-输出一个包含 "relations" 数组的 JSON 对象：
+Output a JSON object containing a "relations" array:
 
 ```json
 {
   "relations": [
     {
       "relation_type": "works_for",
-      "subject": "人物名称",
-      "object_entity": "组织名称",
+      "subject": "Person Name",
+      "object_entity": "Organization Name",
       "time_start": "1995",
       "time_end": "2005",
       "confidence": 0.95
     },
     {
       "relation_type": "serves_as",
-      "subject": "人物名称",
-      "object_entity": "职位名称",
+      "subject": "Person Name",
+      "object_entity": "Position Title",
       "time_start": "2005",
       "time_end": null,
       "confidence": 0.85
@@ -873,32 +873,32 @@ EVENT_STRUCTURIZATION_SYSTEM_PROMPT = """你是一位时间关系提取专家。
 }
 ```
 
-## 重要注意事项
-- 如果时间信息不可用，对 time_start 和 time_end 使用 null
-- 置信度应该是 0.0 到 1.0 之间的浮点数
-- 对于缺失的可选值使用 null（而非空字符串）
-- 如果无法提取关系，返回空的 relations 数组: {"relations": []}
-- 关系类型使用英文（如 works_for），但实体名称保持原始语言
+## Important Notes
+- If temporal information is unavailable, use null for time_start and time_end
+- Confidence should be a float between 0.0 and 1.0
+- Use null (not empty strings) for missing optional values
+- If no relations can be extracted, return an empty relations array: {"relations": []}
+- Relation types should be in English (e.g., works_for), but entity names should maintain their original language
 """
 
-EVENT_STRUCTURIZATION_USER_PROMPT = """从以下事件中提取结构化时间关系：
+EVENT_STRUCTURIZATION_USER_PROMPT = """Extract structured temporal relations from the following event:
 
-**事件描述**: {event_description}
+**Event Description**: {event_description}
 
-**提及的实体**: {entity_names}
+**Mentioned Entities**: {entity_names}
 
-**时间信息**:
-- 开始时间: {time_start}
-- 结束时间: {time_end}
+**Temporal Information**:
+- Start Time: {time_start}
+- End Time: {time_end}
 
-请识别并提取此事件中的所有时间关系。对于每个关系，请指定：
-1. 关系类型（从常见类型中选择或创建描述性类型）
-2. 主体实体
-3. 客体实体
-4. 时间段（开始和/或结束）
-5. 你对提取的置信度
+Please identify and extract all temporal relations in this event. For each relation, specify:
+1. Relation type (choose from common types or create a descriptive type)
+2. Subject entity
+3. Object entity
+4. Time period (start and/or end)
+5. Your confidence in the extraction
 
-以 JSON 格式输出："""
+Output in JSON format:"""
 
 
 # ============================================================
