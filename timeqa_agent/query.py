@@ -1,13 +1,14 @@
 """
-Task Planning Module
+Task Planning and Execution Module
 
-Decomposes complex temporal questions into executable subtasks.
+Decomposes complex temporal questions into executable subtasks and executes them.
 
 Features:
 1. Parse user query using QueryParser to extract question stem and temporal constraints
 2. Use LLM to generate a sequence of subtasks that leverage available tools (Search, Python)
 3. Output structured task plan with dependencies
 4. Support both automatic parsing and accepting pre-parsed QueryParseResult
+5. Execute task plans by calling appropriate tools (Search, Python, LLM)
 """
 
 from __future__ import annotations
@@ -19,6 +20,7 @@ import requests
 from dataclasses import dataclass, field
 from typing import List, Optional, Dict, Any
 from datetime import datetime
+from pathlib import Path
 
 from .config import QueryParserConfig
 
@@ -702,5 +704,552 @@ class TaskPlanner:
             query_analysis=query_analysis,
             subtasks=subtasks,
             total_tasks=len(subtasks),
+            timestamp=datetime.now().isoformat(),
+        )
+
+
+# ============================================================
+# Query Execution Data Structures
+# ============================================================
+
+@dataclass
+class SubTaskResult:
+    """Single subtask execution result"""
+    task_id: str                          # Task identifier
+    question: str                         # Subtask question
+    tool: Optional[str] = None            # Tool used
+    success: bool = False                 # Execution success
+    result: Optional[Any] = None          # Execution result
+    error: Optional[str] = None           # Error message if failed
+    execution_time: Optional[float] = None  # Execution time in seconds
+    timestamp: Optional[str] = None       # Execution timestamp
+
+    def to_dict(self) -> Dict[str, Any]:
+        result_data = self.result
+        # Convert result to dict if it has to_dict method
+        if hasattr(self.result, 'to_dict'):
+            result_data = self.result.to_dict()
+
+        return {
+            "task_id": self.task_id,
+            "question": self.question,
+            "tool": self.tool,
+            "success": self.success,
+            "result": result_data,
+            "error": self.error,
+            "execution_time": self.execution_time,
+            "timestamp": self.timestamp or datetime.now().isoformat(),
+        }
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "SubTaskResult":
+        return cls(
+            task_id=data.get("task_id", ""),
+            question=data.get("question", ""),
+            tool=data.get("tool"),
+            success=data.get("success", False),
+            result=data.get("result"),
+            error=data.get("error"),
+            execution_time=data.get("execution_time"),
+            timestamp=data.get("timestamp"),
+        )
+
+
+@dataclass
+class QueryExecutionResult:
+    """Complete query execution result"""
+    original_query: str                   # Original user query
+    task_plan: TaskPlan                   # Task plan
+    subtask_results: List[SubTaskResult]  # Execution results for each subtask
+    final_result: Optional[Any] = None    # Final result (last subtask's result)
+    success: bool = False                 # Overall execution success
+    total_execution_time: Optional[float] = None  # Total execution time
+    timestamp: Optional[str] = None       # Execution timestamp
+
+    def to_dict(self) -> Dict[str, Any]:
+        final_result_data = self.final_result
+        if hasattr(self.final_result, 'to_dict'):
+            final_result_data = self.final_result.to_dict()
+
+        return {
+            "original_query": self.original_query,
+            "task_plan": self.task_plan.to_dict(),
+            "subtask_results": [r.to_dict() for r in self.subtask_results],
+            "final_result": final_result_data,
+            "success": self.success,
+            "total_execution_time": self.total_execution_time,
+            "timestamp": self.timestamp or datetime.now().isoformat(),
+        }
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "QueryExecutionResult":
+        return cls(
+            original_query=data.get("original_query", ""),
+            task_plan=TaskPlan.from_dict(data.get("task_plan", {})),
+            subtask_results=[SubTaskResult.from_dict(r) for r in data.get("subtask_results", [])],
+            final_result=data.get("final_result"),
+            success=data.get("success", False),
+            total_execution_time=data.get("total_execution_time"),
+            timestamp=data.get("timestamp"),
+        )
+
+
+# ============================================================
+# QueryExecutor Class
+# ============================================================
+
+class QueryExecutor:
+    """Query Executor
+
+    Executes task plans by calling appropriate tools (Search, Python, LLM).
+    """
+
+    def __init__(
+        self,
+        config: Optional[QueryParserConfig] = None,
+        token: Optional[str] = None,
+        graph_store: Optional[Any] = None,
+        retriever: Optional[Any] = None,
+        retrieval_mode: str = "hybrid",
+        entity_top_k: int = 5,
+        timeline_top_k: int = 10,
+        event_top_k: int = 20,
+    ):
+        """Initialize Query Executor
+
+        Args:
+            config: QueryParserConfig object
+            token: API token (optional, will try to get from environment)
+            graph_store: Graph store instance (for Search tool)
+            retriever: Retriever instance (for Search tool)
+            retrieval_mode: Retrieval mode (hybrid/keyword/semantic)
+            entity_top_k: Number of entities to retrieve
+            timeline_top_k: Number of timelines to retrieve
+            event_top_k: Number of events to retrieve
+        """
+        self.config = config or QueryParserConfig()
+
+        # Get API token
+        if token:
+            self.token = token
+        else:
+            self.token = os.environ.get('VENUS_API_TOKEN') or os.environ.get('OPENAI_API_KEY')
+            if not self.token:
+                raise ValueError("Please set VENUS_API_TOKEN or OPENAI_API_KEY environment variable")
+
+        # Store graph_store and retriever for Search tool
+        self.graph_store = graph_store
+        self.retriever = retriever
+        self.retrieval_mode = retrieval_mode
+        self.entity_top_k = entity_top_k
+        self.timeline_top_k = timeline_top_k
+        self.event_top_k = event_top_k
+
+        # Initialize search generator (lazy initialization)
+        self._search_generator = None
+
+        # Initialize python LLM (lazy initialization)
+        self._python_llm = None
+
+    def _get_search_generator(self):
+        """Get or create SearchQueryGenerator instance"""
+        if self._search_generator is None:
+            from .search import SearchQueryGenerator
+
+            self._search_generator = SearchQueryGenerator(
+                config=self.config,
+                token=self.token,
+                graph_store=self.graph_store,
+                retriever=self.retriever,
+            )
+        return self._search_generator
+
+    def _get_python_llm(self):
+        """Get or create PythonLLM instance"""
+        if self._python_llm is None:
+            from .pyllm import PythonLLM
+
+            self._python_llm = PythonLLM(
+                config=self.config,
+                token=self.token,
+            )
+        return self._python_llm
+
+    def _call_api(self, messages: List[dict]) -> str:
+        """Call LLM API
+
+        Args:
+            messages: Message list for API call
+
+        Returns:
+            API response content
+        """
+        payload = {
+            'model': self.config.model,
+            'messages': messages,
+            'temperature': self.config.temperature,
+            'response_format': {'type': 'json_object'},
+        }
+
+        headers = {
+            'Content-Type': 'application/json',
+            'Authorization': f'Bearer {self.token}'
+        }
+
+        for attempt in range(self.config.max_retries):
+            try:
+                response = requests.post(
+                    self.config.base_url,
+                    headers=headers,
+                    data=json.dumps(payload),
+                    timeout=self.config.timeout,
+                )
+
+                if response.status_code != 200:
+                    raise Exception(f"API call failed: {response.status_code} - {response.text}")
+
+                result = response.json()
+                return result['choices'][0]['message']['content']
+            except Exception as e:
+                if attempt == self.config.max_retries - 1:
+                    raise
+                print(f"API call failed, retry {attempt + 1}/{self.config.max_retries}: {e}")
+
+        return ""
+
+    def _parse_json_response(self, content: str) -> Dict[str, Any]:
+        """Parse JSON response from LLM
+
+        Args:
+            content: Response content
+
+        Returns:
+            Parsed JSON dictionary
+        """
+        try:
+            return json.loads(content)
+        except json.JSONDecodeError:
+            # Try to extract JSON from markdown code block
+            match = re.search(r'```(?:json)?\s*([\s\S]*?)\s*```', content)
+            if match:
+                return json.loads(match.group(1))
+            else:
+                raise ValueError(f"Unable to parse JSON response: {content[:200]}")
+
+    def _execute_search_tool(
+        self,
+        subtask: SubTask,
+        query_analysis: Any,
+        previous_results: Dict[str, Any],
+    ) -> Any:
+        """Execute Search tool
+
+        Args:
+            subtask: SubTask object
+            query_analysis: QueryParseResult object
+            previous_results: Results from previous subtasks
+
+        Returns:
+            Search results (RetrievalResults object)
+        """
+        if self.graph_store is None or self.retriever is None:
+            raise ValueError("Graph store and retriever are required for Search tool")
+
+        # Get search query from tool_params
+        search_query = subtask.tool_params.get("query", "")
+        if not search_query:
+            raise ValueError(f"Search tool requires 'query' parameter in tool_params")
+
+        print(f"  执行检索: {search_query}")
+
+        # Get search generator
+        generator = self._get_search_generator()
+
+        # Execute retrieval
+        results = generator.retrieve_with_queries(
+            input_text=search_query,
+            retrieval_mode=self.retrieval_mode,
+            entity_top_k=self.entity_top_k,
+            timeline_top_k=self.timeline_top_k,
+            event_top_k=self.event_top_k,
+            question_analysis=query_analysis,
+        )
+
+        # Return filtered structured events if available, otherwise merged events
+        if hasattr(results, 'filtered_structured_events') and results.filtered_structured_events:
+            print(f"  返回过滤后的结构化事件: {len(results.filtered_structured_events)} 条")
+            return results.filtered_structured_events
+        elif hasattr(results, 'merged_events') and results.merged_events:
+            print(f"  返回合并后的事件: {len(results.merged_events)} 个")
+            return results.merged_events
+        else:
+            print(f"  返回原始检索结果")
+            return results
+
+    def _execute_python_tool(
+        self,
+        subtask: SubTask,
+        query_analysis: Any,
+        previous_results: Dict[str, Any],
+    ) -> Any:
+        """Execute Python tool
+
+        Args:
+            subtask: SubTask object
+            query_analysis: QueryParseResult object
+            previous_results: Results from previous subtasks
+
+        Returns:
+            Python execution result (output string or structured data)
+        """
+        # Get code description from tool_params
+        code_description = subtask.tool_params.get("code_description", "")
+        if not code_description:
+            raise ValueError(f"Python tool requires 'code_description' parameter in tool_params")
+
+        print(f"  生成并执行 Python 代码")
+
+        # Build context from previous results (depends_on)
+        context_parts = []
+        if subtask.depends_on:
+            for dep_id in subtask.depends_on:
+                if dep_id in previous_results:
+                    dep_result = previous_results[dep_id]
+                    # Format the result as context
+                    if isinstance(dep_result, list):
+                        context_parts.append(f"Results from {dep_id}: {len(dep_result)} items")
+                        # Show first few items
+                        if dep_result:
+                            context_parts.append(f"Sample: {dep_result[:3]}")
+                    elif isinstance(dep_result, str):
+                        context_parts.append(f"Results from {dep_id}: {dep_result}")
+                    else:
+                        context_parts.append(f"Results from {dep_id}: {str(dep_result)[:200]}")
+
+        context = "\n".join(context_parts) if context_parts else ""
+
+        # Get Python LLM
+        python_llm = self._get_python_llm()
+
+        # Generate and execute code
+        result = python_llm.generate_and_execute(
+            user_request=code_description,
+            context=context,
+            execute=True,
+            timeout=30,
+        )
+
+        # Extract execution result
+        if result.get('execution') and result['execution'].success:
+            output = result['execution'].output
+            print(f"  Python 执行成功，输出: {output[:100]}...")
+            return output
+        else:
+            error_msg = result['execution'].error if result.get('execution') else "Unknown error"
+            raise Exception(f"Python execution failed: {error_msg}")
+
+    def _execute_null_tool(
+        self,
+        subtask: SubTask,
+        query_analysis: Any,
+        previous_results: Dict[str, Any],
+    ) -> Any:
+        """Execute NULL tool (LLM reasoning)
+
+        Args:
+            subtask: SubTask object
+            query_analysis: QueryParseResult object
+            previous_results: Results from previous subtasks
+
+        Returns:
+            LLM reasoning result (string)
+        """
+        print(f"  调用 LLM 进行推理")
+
+        # Build context from previous results
+        context_parts = []
+        context_parts.append(f"Original Question: {query_analysis.original_question}")
+        context_parts.append(f"Question Stem: {query_analysis.question_stem}")
+        context_parts.append(f"Time Constraint: {query_analysis.time_constraint.description}")
+
+        # Add previous results
+        if subtask.depends_on:
+            context_parts.append("\nPrevious Results:")
+            for dep_id in subtask.depends_on:
+                if dep_id in previous_results:
+                    dep_result = previous_results[dep_id]
+                    # Format the result
+                    if isinstance(dep_result, list):
+                        context_parts.append(f"\n{dep_id}: {len(dep_result)} items")
+                        # Show details
+                        for i, item in enumerate(dep_result[:5], 1):
+                            if hasattr(item, '__dict__'):
+                                context_parts.append(f"  {i}. {str(item)[:150]}")
+                            else:
+                                context_parts.append(f"  {i}. {str(item)[:150]}")
+                    elif isinstance(dep_result, str):
+                        context_parts.append(f"\n{dep_id}: {dep_result}")
+                    else:
+                        context_parts.append(f"\n{dep_id}: {str(dep_result)[:300]}")
+
+        context = "\n".join(context_parts)
+
+        # Build prompt for LLM
+        system_prompt = """You are a helpful assistant that answers temporal questions based on provided context and previous results.
+
+Your task:
+1. Analyze the context and previous results
+2. Answer the current question directly and concisely
+3. Output in JSON format: {"answer": "your answer"}"""
+
+        user_prompt = f"""Context:
+{context}
+
+Current Question: {subtask.question}
+
+Please provide your answer based on the context and previous results."""
+
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ]
+
+        # Call LLM
+        content = self._call_api(messages)
+        data = self._parse_json_response(content)
+
+        answer = data.get("answer", "")
+        print(f"  LLM 推理结果: {answer[:100]}...")
+        return answer
+
+    def _execute_subtask(
+        self,
+        subtask: SubTask,
+        query_analysis: Any,
+        previous_results: Dict[str, Any],
+    ) -> SubTaskResult:
+        """Execute a single subtask
+
+        Args:
+            subtask: SubTask object
+            query_analysis: QueryParseResult object
+            previous_results: Results from previous subtasks (task_id -> result)
+
+        Returns:
+            SubTaskResult object
+        """
+        import time
+        start_time = time.time()
+
+        print(f"\n[{subtask.task_id}] {subtask.question}")
+        print(f"  工具: {subtask.tool or 'NULL'}")
+
+        try:
+            # Execute based on tool type
+            if subtask.tool and subtask.tool.lower() == "search":
+                result = self._execute_search_tool(subtask, query_analysis, previous_results)
+            elif subtask.tool and subtask.tool.lower() == "python":
+                result = self._execute_python_tool(subtask, query_analysis, previous_results)
+            else:  # NULL tool
+                result = self._execute_null_tool(subtask, query_analysis, previous_results)
+
+            execution_time = time.time() - start_time
+
+            return SubTaskResult(
+                task_id=subtask.task_id,
+                question=subtask.question,
+                tool=subtask.tool,
+                success=True,
+                result=result,
+                execution_time=execution_time,
+                timestamp=datetime.now().isoformat(),
+            )
+
+        except Exception as e:
+            execution_time = time.time() - start_time
+            print(f"  ✗ 执行失败: {e}")
+
+            return SubTaskResult(
+                task_id=subtask.task_id,
+                question=subtask.question,
+                tool=subtask.tool,
+                success=False,
+                error=str(e),
+                execution_time=execution_time,
+                timestamp=datetime.now().isoformat(),
+            )
+
+    def execute_task_plan(
+        self,
+        task_plan: TaskPlan,
+    ) -> QueryExecutionResult:
+        """Execute a complete task plan
+
+        Args:
+            task_plan: TaskPlan object
+
+        Returns:
+            QueryExecutionResult object
+        """
+        import time
+        start_time = time.time()
+
+        print("\n" + "=" * 60)
+        print("开始执行任务规划")
+        print("=" * 60)
+        print(f"查询: {task_plan.original_query}")
+        print(f"子任务数量: {task_plan.total_tasks}")
+
+        # Store results by task_id
+        previous_results = {}
+        subtask_results = []
+
+        # Execute subtasks in order
+        for subtask in task_plan.subtasks:
+            # Check dependencies
+            if subtask.depends_on:
+                print(f"  依赖: {', '.join(subtask.depends_on)}")
+                # Verify all dependencies are available
+                for dep_id in subtask.depends_on:
+                    if dep_id not in previous_results:
+                        raise ValueError(f"Missing dependency: {dep_id} for task {subtask.task_id}")
+
+            # Execute subtask
+            result = self._execute_subtask(subtask, task_plan.query_analysis, previous_results)
+
+            # Store result
+            subtask_results.append(result)
+            if result.success:
+                previous_results[subtask.task_id] = result.result
+                print(f"  ✓ 执行成功 ({result.execution_time:.2f}s)")
+            else:
+                # If a subtask fails, stop execution
+                print(f"  ✗ 执行失败，停止后续任务")
+                break
+
+        # Determine final result (last subtask's result)
+        final_result = None
+        success = False
+        if subtask_results and subtask_results[-1].success:
+            final_result = subtask_results[-1].result
+            success = True
+
+        total_execution_time = time.time() - start_time
+
+        print("\n" + "=" * 60)
+        print("执行完成")
+        print("=" * 60)
+        print(f"总耗时: {total_execution_time:.2f}s")
+        print(f"成功: {success}")
+        if success:
+            print(f"最终结果: {str(final_result)[:200]}...")
+
+        return QueryExecutionResult(
+            original_query=task_plan.original_query,
+            task_plan=task_plan,
+            subtask_results=subtask_results,
+            final_result=final_result,
+            success=success,
+            total_execution_time=total_execution_time,
             timestamp=datetime.now().isoformat(),
         )

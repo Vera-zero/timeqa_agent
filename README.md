@@ -1330,6 +1330,273 @@ Subtasks
 
 **注意**：建议保持 `temperature=0` 以确保任务规划结果稳定一致。
 
+### 任务执行 (query.py - Execution)
+
+任务执行模块负责执行任务规划生成的子任务序列，调用相应的工具并返回最终结果。
+
+#### 主要功能
+
+- **子任务执行**: 按顺序执行任务规划中的每个子任务
+- **工具调用**: 支持三种工具类型
+  - **Search**: 调用检索系统从知识库中检索信息
+  - **Python**: 调用代码生成器生成并执行 Python 代码
+  - **NULL**: 调用 LLM 进行推理综合
+- **依赖管理**: 自动解析子任务依赖，将前置任务结果传递给后续任务
+- **结果跟踪**: 记录每个子任务的执行状态、结果和耗时
+
+#### 命令行使用
+
+```bash
+# 执行任务规划文件
+python -m timeqa_agent.query_cli execute --plan task_plan.json -g data/timeqa/graph/test.json
+
+# 直接执行查询（自动规划+执行）
+python -m timeqa_agent.query_cli query "Which team did X play for in 2013?" -g data/timeqa/graph/test.json
+
+# 指定检索参数
+python -m timeqa_agent.query_cli query "Who was he married to?" -g graph.json --mode keyword --entity-topk 10
+
+# JSON 格式输出
+python -m timeqa_agent.query_cli query "When did he graduate?" -g graph.json --json
+
+# 保存执行结果
+python -m timeqa_agent.query_cli query "Query question" -g graph.json --save --output result.json
+
+# 详细输出
+python -m timeqa_agent.query_cli query "Query question" -g graph.json -v
+```
+
+#### Python API 使用
+
+```python
+from timeqa_agent.query import QueryExecutor, TaskPlanner
+from timeqa_agent.config import load_config
+from timeqa_agent.graph_store import TimelineGraphStore
+from timeqa_agent.retrievers import HybridRetriever
+
+# 加载配置和图存储
+config = load_config()
+graph_store = TimelineGraphStore()
+graph_store.load("data/timeqa/graph/test.json")
+
+# 创建检索器
+retriever = HybridRetriever(graph_store, config=config.retriever)
+
+# 创建执行器
+executor = QueryExecutor(
+    config=config.query_parser,
+    graph_store=graph_store,
+    retriever=retriever,
+    retrieval_mode="hybrid",
+    entity_top_k=5,
+    timeline_top_k=10,
+    event_top_k=20,
+)
+
+# 方式1: 执行任务规划文件
+with open("task_plan.json", "r") as f:
+    plan_data = json.load(f)
+    task_plan = TaskPlan.from_dict(plan_data)
+
+result = executor.execute_task_plan(task_plan)
+
+# 方式2: 直接执行查询（规划+执行）
+planner = TaskPlanner(config.query_parser)
+task_plan = planner.plan_tasks("Which team did X play for in 2013?")
+result = executor.execute_task_plan(task_plan)
+
+# 访问执行结果
+print(f"Success: {result.success}")
+print(f"Total Time: {result.total_execution_time:.2f}s")
+
+# 查看每个子任务的结果
+for task_result in result.subtask_results:
+    print(f"\n[{task_result.task_id}] {task_result.question}")
+    print(f"  Success: {task_result.success}")
+    print(f"  Time: {task_result.execution_time:.2f}s")
+    if task_result.success:
+        print(f"  Result: {task_result.result}")
+    else:
+        print(f"  Error: {task_result.error}")
+
+# 获取最终结果
+if result.success:
+    print(f"\nFinal Result: {result.final_result}")
+```
+
+#### 数据结构
+
+**SubTaskResult（子任务执行结果）**：
+- `task_id`: 任务ID
+- `question`: 子任务问题
+- `tool`: 使用的工具
+- `success`: 执行是否成功
+- `result`: 执行结果（成功时）
+- `error`: 错误信息（失败时）
+- `execution_time`: 执行耗时（秒）
+- `timestamp`: 执行时间戳
+
+**QueryExecutionResult（查询执行结果）**：
+- `original_query`: 原始查询
+- `task_plan`: 任务规划
+- `subtask_results`: 所有子任务的执行结果列表
+- `final_result`: 最终结果（最后一个子任务的结果）
+- `success`: 整体执行是否成功
+- `total_execution_time`: 总执行耗时（秒）
+- `timestamp`: 执行时间戳
+
+#### 输出示例
+
+```
+============================================================
+开始执行任务规划
+============================================================
+查询: Which team did Thierry Audel play for in 2013?
+子任务数量: 3
+
+[task-001] Retrieve the career timeline of Thierry Audel
+  工具: Search
+  执行检索: Thierry Audel career
+  返回过滤后的结构化事件: 15 条
+  ✓ 执行成功 (2.34s)
+
+[task-002] Filter timeline events to find team affiliation in 2013
+  工具: Python
+  依赖: task-001
+  生成并执行 Python 代码
+  Python 执行成功，输出: Found 2 matching events...
+  ✓ 执行成功 (1.87s)
+
+[task-003] Extract the team name from filtered results
+  工具: NULL
+  依赖: task-002
+  调用 LLM 进行推理
+  LLM 推理结果: Based on the filtered events, Thierry Audel played for Lyon in 2013...
+  ✓ 执行成功 (1.23s)
+
+============================================================
+执行完成
+============================================================
+总耗时: 5.44s
+成功: True
+最终结果: Based on the filtered events, Thierry Audel played for Lyon in 2013...
+```
+
+#### 工具调用详解
+
+**1. Search 工具**
+
+调用检索系统，支持参数：
+- `query`: 检索查询文本（必需）
+- 使用执行器配置的检索模式（hybrid/keyword/semantic）
+- 返回过滤后的结构化事件列表
+
+示例：
+```json
+{
+  "tool": "Search",
+  "tool_params": {
+    "query": "Thierry Audel career timeline"
+  }
+}
+```
+
+**2. Python 工具**
+
+生成并执行 Python 代码，支持参数：
+- `code_description`: 代码功能描述（必需）
+- 自动获取前置任务结果作为上下文
+- 返回代码执行输出
+
+示例：
+```json
+{
+  "tool": "Python",
+  "tool_params": {
+    "code_description": "Filter events where time period includes 2013 and event describes team affiliation"
+  },
+  "depends_on": ["task-001"]
+}
+```
+
+**3. NULL 工具**
+
+调用 LLM 进行推理，无需参数：
+- 自动构建包含查询分析和前置结果的上下文
+- 返回 LLM 推理结果
+
+示例：
+```json
+{
+  "tool": null,
+  "depends_on": ["task-002"]
+}
+```
+
+#### 交互式模式
+
+```bash
+# 启动交互式模式（需要指定图文件）
+python -m timeqa_agent.query_cli -g data/timeqa/graph/test.json
+
+# 可用命令：
+> plan <query>              # 规划任务
+> execute <plan_file>       # 执行任务规划文件
+> query <query>             # 直接执行查询
+> mode <hybrid|keyword|semantic>  # 设置检索模式
+> verbose                   # 切换详细输出
+> json                      # 切换 JSON 输出
+> help                      # 显示帮助
+> quit/exit                 # 退出
+```
+
+#### 命令行参数
+
+| 参数 | 简写 | 说明 | 默认值 |
+|------|------|------|--------|
+| --graph | -g | 图文件路径（执行必需） | None |
+| --config | -c | 配置文件路径 | None |
+| command | | 命令：plan, execute, query, interactive | interactive |
+| query | | 查询问题（plan/query命令） | None |
+| --plan | | 任务规划文件路径（execute命令） | None |
+| --mode | | 检索模式 | hybrid |
+| --entity-topk | | 实体检索数量 | 5 |
+| --timeline-topk | | 时间线检索数量 | 10 |
+| --event-topk | | 事件检索数量 | 20 |
+| --json | | JSON格式输出 | false |
+| --save | | 保存结果到文件 | false |
+| --output | | 输出文件路径 | query_plan_result.json |
+| --verbose | -v | 详细输出 | false |
+
+#### 配置说明
+
+任务执行模块复用查询解析器的配置：
+
+```json
+{
+  "query_parser": {
+    "model": "deepseek-chat",
+    "base_url": "https://api.deepseek.com/chat/completions",
+    "temperature": 0,
+    "max_retries": 3,
+    "timeout": 180,
+
+    "retrieval_mode": "hybrid",
+    "entity_top_k": 5,
+    "timeline_top_k": 10,
+    "event_top_k": 20
+  }
+}
+```
+
+#### 注意事项
+
+1. **图文件必需**: 执行任务需要指定 `--graph` 参数，否则 Search 工具无法使用
+2. **API Token**: 需要设置 `VENUS_API_TOKEN` 或 `OPENAI_API_KEY` 环境变量
+3. **依赖顺序**: 子任务按规划顺序执行，确保依赖关系正确
+4. **错误处理**: 如果某个子任务失败，后续任务将不会执行
+5. **资源消耗**: 完整执行可能调用多次 LLM API，注意成本控制
+
 ## 中间文件
 
 每个阶段的输出会保存到对应目录：
