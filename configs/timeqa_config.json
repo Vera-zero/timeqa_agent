@@ -17,13 +17,13 @@
     "timeout": 180,
     "batch_size": 1,
     "enable_multi_round": false,
-    "max_rounds": 2,
+    "max_rounds": 1,
     "review_temperature": 0.0,
     "prior_events_context_mode": "full",
-    "prior_events_window_size": 3
+    "prior_events_window_size": 2
   },
   "event_filter": {
-    "enabled": true
+    "enabled": false
   },
   "event_validator": {
     "enabled": true,
