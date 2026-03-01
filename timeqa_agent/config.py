@@ -35,15 +35,15 @@ class ChunkConfig:
     """分块配置"""
     strategy: ChunkStrategy = ChunkStrategy.FIXED_SIZE
 
-    # 固定大小分块参数
-    chunk_size: int = 1500         # 分块大小（字符数）
-    chunk_overlap: int = 100       # 重叠大小（字符数）
+    # 固定大小分块参数（基于 token 数，使用 tiktoken cl100k_base 编码）
+    chunk_size: int = 1500         # 分块大小（token 数）
+    chunk_overlap: int = 100       # 重叠大小（token 数）
 
     # 句子分块参数
     max_sentences: int = 10        # 每个分块最大句子数
     sentence_overlap: int = 2      # 重叠句子数
-    min_chunk_size: int = 500      # 最小分块大小（字符数）
-    max_chunk_size: int = 2000     # 最大分块大小（字符数）
+    min_chunk_size: int = 500      # 最小分块大小（token 数）
+    max_chunk_size: int = 2000     # 最大分块大小（token 数）
 
     # 通用参数
     preserve_sentences: bool = True  # 固定大小分块时是否尽量保持句子完整

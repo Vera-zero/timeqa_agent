@@ -2,7 +2,7 @@
 Document Chunking Module
 
 Supports two chunking strategies:
-1. Fixed Size Chunking: Split by character count with overlap
+1. Fixed Size Chunking: Split by token count with overlap (using tiktoken)
 2. Sentence Chunking: Split by sentence boundaries for semantic coherence
 """
 
@@ -12,6 +12,13 @@ import re
 from dataclasses import dataclass, field
 from typing import List, Optional, Dict, Any
 
+try:
+    import tiktoken
+    TIKTOKEN_AVAILABLE = True
+except ImportError:
+    TIKTOKEN_AVAILABLE = False
+    print("Warning: tiktoken not available, falling back to character-based chunking")
+
 from .config import ChunkStrategy, ChunkConfig
 
 
@@ -20,18 +27,19 @@ class Chunk:
     """文档分块"""
     chunk_id: str                  # 分块唯一标识
     content: str                   # 分块内容
-    
+
     # 文档元信息
     doc_id: str                    # 所属文档ID
     doc_title: str                 # 文档标题
     source_idx: str                # 原始索引
-    
+
     # 分块元信息
     chunk_index: int               # 分块在文档中的索引
     start_char: int                # 起始字符位置
     end_char: int                  # 结束字符位置
     strategy: ChunkStrategy        # 使用的分块策略
-    
+    token_count: int = 0           # 分块的 token 数量
+
     # 可选元信息
     metadata: Dict[str, Any] = field(default_factory=dict)
     
@@ -49,6 +57,7 @@ class Chunk:
             "start_char": self.start_char,
             "end_char": self.end_char,
             "strategy": strategy_value,
+            "token_count": self.token_count,
             "metadata": self.metadata,
         }
     
@@ -65,21 +74,63 @@ class Chunk:
             start_char=data["start_char"],
             end_char=data["end_char"],
             strategy=ChunkStrategy(data["strategy"]),
+            token_count=data.get("token_count", 0),
             metadata=data.get("metadata", {}),
         )
 
 
 class DocumentChunker:
     """文档分块器"""
-    
+
     def __init__(self, config: Optional[ChunkConfig] = None):
         self.config = config or ChunkConfig()
-        
+
+        # 初始化 tiktoken encoder (用于 token 数分块)
+        self._encoder = None
+        if TIKTOKEN_AVAILABLE:
+            try:
+                self._encoder = tiktoken.get_encoding("cl100k_base")
+                print("Using tiktoken for token-based chunking")
+            except Exception as e:
+                print(f"Failed to initialize tiktoken encoder: {e}")
+                self._encoder = None
+
         # 句子分割正则表达式
         # 匹配句号、问号、感叹号（包括中英文）
         self._sentence_pattern = re.compile(
             r'(?<=[.!?。！？])\s+|(?<=[.!?。！？])(?=[A-Z])'
         )
+
+    def _count_tokens(self, text: str) -> int:
+        """计算文本的 token 数量"""
+        if self._encoder is not None:
+            try:
+                return len(self._encoder.encode(text))
+            except Exception as e:
+                print(f"Error encoding text: {e}, falling back to character count")
+                return len(text)
+        # 如果 tiktoken 不可用，回退到字符数（近似）
+        return len(text)
+
+    def _encode_text(self, text: str) -> List[int]:
+        """将文本编码为 token 列表"""
+        if self._encoder is not None:
+            try:
+                return self._encoder.encode(text)
+            except Exception as e:
+                print(f"Error encoding text: {e}")
+                return []
+        return []
+
+    def _decode_tokens(self, tokens: List[int]) -> str:
+        """将 token 列表解码为文本"""
+        if self._encoder is not None:
+            try:
+                return self._encoder.decode(tokens)
+            except Exception as e:
+                print(f"Error decoding tokens: {e}")
+                return ""
+        return ""
     
     def chunk_document(
         self,
@@ -119,11 +170,155 @@ class DocumentChunker:
         source_idx: str,
         metadata: Optional[Dict[str, Any]] = None,
     ) -> List[Chunk]:
-        """固定大小分块"""
+        """固定大小分块（基于 token 数）"""
         chunks = []
         chunk_size = self.config.chunk_size
         overlap = self.config.chunk_overlap
-        
+
+        # 如果 tiktoken 可用，使用基于 token 的分块
+        if self._encoder is not None:
+            return self._chunk_fixed_size_by_tokens(
+                content, doc_id, doc_title, source_idx, metadata
+            )
+        else:
+            # 回退到基于字符的分块
+            return self._chunk_fixed_size_by_chars(
+                content, doc_id, doc_title, source_idx, metadata
+            )
+
+    def _chunk_fixed_size_by_tokens(
+        self,
+        content: str,
+        doc_id: str,
+        doc_title: str,
+        source_idx: str,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> List[Chunk]:
+        """基于 token 数的固定大小分块"""
+        chunks = []
+        chunk_size = self.config.chunk_size
+        overlap = self.config.chunk_overlap
+
+        # 将整个文本编码为 tokens
+        tokens = self._encode_text(content)
+        if not tokens:
+            # 如果编码失败，回退到字符分块
+            return self._chunk_fixed_size_by_chars(
+                content, doc_id, doc_title, source_idx, metadata
+            )
+
+        total_tokens = len(tokens)
+
+        # 如果 token 数小于等于分块大小，直接返回整个文档
+        if total_tokens <= chunk_size:
+            chunk_id = f"{doc_id}-chunk-0000"
+            chunks.append(Chunk(
+                chunk_id=chunk_id,
+                content=content,
+                doc_id=doc_id,
+                doc_title=doc_title,
+                source_idx=source_idx,
+                chunk_index=0,
+                start_char=0,
+                end_char=len(content),
+                strategy=ChunkStrategy.FIXED_SIZE,
+                token_count=total_tokens,
+                metadata=metadata or {},
+            ))
+            return chunks
+
+        # 按 token 数分块
+        chunk_index = 0
+        start_token_idx = 0
+
+        # 用于追踪字符位置（用于 start_char 和 end_char）
+        char_positions = []
+        current_pos = 0
+        for i in range(len(tokens) + 1):
+            # 解码前 i 个 tokens 来获取字符位置
+            decoded = self._decode_tokens(tokens[:i])
+            char_positions.append(len(decoded))
+
+        while start_token_idx < total_tokens:
+            end_token_idx = min(start_token_idx + chunk_size, total_tokens)
+
+            # 提取这个分块的 tokens
+            chunk_tokens = tokens[start_token_idx:end_token_idx]
+
+            # 解码为文本
+            chunk_content = self._decode_tokens(chunk_tokens).strip()
+
+            if chunk_content:
+                # 计算字符位置
+                start_char = char_positions[start_token_idx]
+                end_char = char_positions[end_token_idx]
+
+                chunk_id = f"{doc_id}-chunk-{chunk_index:04d}"
+                chunks.append(Chunk(
+                    chunk_id=chunk_id,
+                    content=chunk_content,
+                    doc_id=doc_id,
+                    doc_title=doc_title,
+                    source_idx=source_idx,
+                    chunk_index=chunk_index,
+                    start_char=start_char,
+                    end_char=end_char,
+                    strategy=ChunkStrategy.FIXED_SIZE,
+                    token_count=len(chunk_tokens),
+                    metadata=metadata or {},
+                ))
+                chunk_index += 1
+                print(f"Created chunk {chunk_id} with {len(chunk_tokens)} tokens (start: {start_token_idx}, end: {end_token_idx})")
+
+            # 下一个分块的起始位置（考虑重叠）
+            start_token_idx = end_token_idx - overlap
+            if start_token_idx <= chunks[-1].start_char if chunks else 0:
+                start_token_idx = end_token_idx  # 避免无限循环
+
+        # 处理最后一个分块：如果太小，合并到上一个分块
+        if len(chunks) > 1:
+            last_chunk_tokens = self._count_tokens(chunks[-1].content)
+            min_chunk_tokens = self.config.min_chunk_size  # 假设 min_chunk_size 也是 token 数
+            if last_chunk_tokens < min_chunk_tokens:
+                print(f"最后一个分块大小 ({last_chunk_tokens} tokens) 小于最小限制 ({min_chunk_tokens} tokens)，进行合并")
+                last_chunk = chunks[-1]
+                prev_chunk = chunks[-2]
+
+                # 合并内容
+                merged_content = prev_chunk.content + ' ' + last_chunk.content
+
+                # 更新倒数第二个分块为合并后的分块
+                chunks[-2] = Chunk(
+                    chunk_id=prev_chunk.chunk_id,
+                    content=merged_content.strip(),
+                    doc_id=doc_id,
+                    doc_title=doc_title,
+                    source_idx=source_idx,
+                    chunk_index=prev_chunk.chunk_index,
+                    start_char=prev_chunk.start_char,
+                    end_char=last_chunk.end_char,
+                    strategy=ChunkStrategy.FIXED_SIZE,
+                    token_count=self._count_tokens(merged_content.strip()),
+                    metadata=metadata or {},
+                )
+                # 删除最后一个分块
+                chunks.pop()
+
+        return chunks
+
+    def _chunk_fixed_size_by_chars(
+        self,
+        content: str,
+        doc_id: str,
+        doc_title: str,
+        source_idx: str,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> List[Chunk]:
+        """基于字符数的固定大小分块（回退方案）"""
+        chunks = []
+        chunk_size = self.config.chunk_size
+        overlap = self.config.chunk_overlap
+
         if len(content) <= chunk_size:
             # 内容小于分块大小，直接返回整个文档作为一个分块
             chunk_id = f"{doc_id}-chunk-0000"
@@ -137,6 +332,7 @@ class DocumentChunker:
                 start_char=0,
                 end_char=len(content),
                 strategy=ChunkStrategy.FIXED_SIZE,
+                token_count=self._count_tokens(content),
                 metadata=metadata or {},
             ))
             return chunks
@@ -177,6 +373,7 @@ class DocumentChunker:
                     start_char=start,
                     end_char=end,
                     strategy=ChunkStrategy.FIXED_SIZE,
+                    token_count=self._count_tokens(chunk_content),
                     metadata=metadata or {},
                 ))
                 chunk_index += 1
@@ -209,6 +406,7 @@ class DocumentChunker:
                 start_char=prev_chunk.start_char,
                 end_char=last_chunk.end_char,
                 strategy=ChunkStrategy.FIXED_SIZE,
+                token_count=self._count_tokens(chunk_content),
                 metadata=metadata or {},
             )
             # 删除最后一个分块
@@ -289,7 +487,7 @@ class DocumentChunker:
                 # 保存当前分块
                 chunk_content = ' '.join(current_chunk_sentences)
                 chunk_id = f"{doc_id}-chunk-{chunk_index:04d}"
-                
+
                 chunks.append(Chunk(
                     chunk_id=chunk_id,
                     content=chunk_content,
@@ -300,6 +498,7 @@ class DocumentChunker:
                     start_char=current_chunk_start,
                     end_char=sent_start,
                     strategy=ChunkStrategy.SENTENCE,
+                    token_count=self._count_tokens(chunk_content),
                     metadata=metadata or {},
                 ))
                 chunk_index += 1
@@ -341,6 +540,7 @@ class DocumentChunker:
                         start_char=last_chunk.start_char,
                         end_char=len(content),
                         strategy=ChunkStrategy.SENTENCE,
+                        token_count=self._count_tokens(merged_content),
                         metadata=metadata or {},
                     )
                 else:
@@ -356,6 +556,7 @@ class DocumentChunker:
                         start_char=current_chunk_start,
                         end_char=len(content),
                         strategy=ChunkStrategy.SENTENCE,
+                        token_count=self._count_tokens(chunk_content),
                         metadata=metadata or {},
                     ))
             else:
@@ -370,6 +571,7 @@ class DocumentChunker:
                     start_char=current_chunk_start,
                     end_char=len(content),
                     strategy=ChunkStrategy.SENTENCE,
+                    token_count=self._count_tokens(chunk_content),
                     metadata=metadata or {},
                 ))
         
