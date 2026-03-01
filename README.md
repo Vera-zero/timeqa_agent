@@ -71,6 +71,8 @@ timeqa_agent/
 │   ├── query_parser_cli.py    # 查询解析器命令行工具
 │   ├── search.py              # 检索语句生成器 + 事件结构化器
 │   ├── search_cli.py          # 检索语句生成器命令行工具
+│   ├── pyllm.py               # Python 代码生成与执行工具
+│   ├── pyllm_cli.py           # 代码生成工具命令行接口
 │   ├── pipeline.py            # 抽取流水线
 │   └── retrievers/
 │       ├── base.py                    # 检索器基类和数据结构
@@ -955,6 +957,166 @@ python -m timeqa_agent.search_cli -g data/timeqa/graph/test.json
 - 过滤前有45条结构化关系（包括婚姻、出生、获奖等无关事件）
 - 过滤后仅保留8条与"哪个球队效力"相关的关系
 - 时间约束（2013年）也被考虑，排除了不在该时间段的效力关系
+
+### Python 代码生成工具 (pyllm)
+
+Python 代码生成工具使用 LLM 根据自然语言需求生成并执行 Python 代码。
+
+#### 主要功能
+
+- **代码生成**: 根据用户自然语言描述生成 Python 代码
+- **安全执行**: 在独立的 subprocess 中执行代码，带超时控制
+- **结果保存**: 自动将生成的代码和执行结果保存到 JSON 文件
+
+#### 命令行使用
+
+```bash
+# 交互式模式
+python -m timeqa_agent.pyllm_cli
+
+# 生成并执行代码
+python -m timeqa_agent.pyllm_cli execute "Calculate the sum from 1 to 100"
+
+# 仅生成代码，不执行
+python -m timeqa_agent.pyllm_cli generate "Read CSV file and count rows"
+
+# 使用指定配置文件
+python -m timeqa_agent.pyllm_cli -c configs/timeqa_config.json execute "Print current date"
+
+# JSON 格式输出
+python -m timeqa_agent.pyllm_cli execute "Calculate factorial of 10" --json
+
+# 保存结果到指定文件
+python -m timeqa_agent.pyllm_cli execute "List files in current directory" --save-output my_result.json
+
+# 设置执行超时（默认 30 秒）
+python -m timeqa_agent.pyllm_cli execute "Calculate pi to 100 digits" --timeout 60
+
+# 不自动保存结果
+python -m timeqa_agent.pyllm_cli execute "Print hello world" --no-save
+```
+
+#### Python API 使用
+
+```python
+from timeqa_agent.config import load_config
+from timeqa_agent.pyllm import PythonLLM
+
+# 加载配置
+config = load_config()
+
+# 创建代码生成器
+llm = PythonLLM(config.query_parser)
+
+# 仅生成代码
+result = llm.generate_code(
+    user_request="Calculate the Fibonacci sequence up to 10 terms"
+)
+print(f"Generated Code:\n{result.generated_code}")
+print(f"Explanation: {result.explanation}")
+
+# 生成并执行代码
+result = llm.generate_and_execute(
+    user_request="Calculate the sum of squares from 1 to 100",
+    execute=True,
+    timeout=30
+)
+
+# 访问生成结果
+generation = result['generation']
+print(f"User Request: {generation.user_request}")
+print(f"Generated Code:\n{generation.generated_code}")
+print(f"Explanation: {generation.explanation}")
+
+# 访问执行结果
+if result['execution']:
+    execution = result['execution']
+    print(f"Success: {execution.success}")
+    print(f"Output:\n{execution.output}")
+    if execution.error:
+        print(f"Error: {execution.error}")
+    print(f"Execution Time: {execution.execution_time:.3f}s")
+```
+
+#### 交互式模式命令
+
+进入交互式模式后可用的命令：
+
+| 命令 | 说明 |
+|------|------|
+| `<request>` | 生成并执行代码 |
+| `generate <request>` | 仅生成代码，不执行 |
+| `verbose` | 切换详细输出 |
+| `json` | 切换 JSON 输出模式 |
+| `autosave` | 切换自动保存结果 |
+| `help` | 显示帮助 |
+| `quit/exit` | 退出 |
+
+#### 命令行参数
+
+| 参数 | 简写 | 说明 | 默认值 |
+|------|------|------|--------|
+| --config | -c | 配置文件路径 | None |
+| --json | | JSON 格式输出 | false |
+| --save-output | | 指定输出文件路径 | None |
+| --no-execute | | 仅生成代码，不执行 | false |
+| --no-save | | 不自动保存结果 | false |
+| --timeout | | 执行超时时间（秒） | 30 |
+| --verbose | -v | 详细输出 | false |
+
+#### 输出文件
+
+执行结果自动保存到 `data/pyllm_outputs/pyllm_result_{timestamp}.json`，包含：
+
+```json
+{
+  "generation": {
+    "user_request": "Calculate the sum from 1 to 100",
+    "generated_code": "def sum_range(n):\n    return sum(range(1, n + 1))\n\nresult = sum_range(100)\nprint(f'Sum: {result}')",
+    "explanation": "Defines a function to calculate the sum using Python's built-in sum function",
+    "timestamp": "2026-03-01T10:30:00.123456"
+  },
+  "execution": {
+    "code": "def sum_range(n):\n    return sum(range(1, n + 1))\n\nresult = sum_range(100)\nprint(f'Sum: {result}')",
+    "success": true,
+    "output": "Sum: 5050\n",
+    "error": null,
+    "execution_time": 0.015,
+    "return_code": 0,
+    "timestamp": "2026-03-01T10:30:00.145678"
+  }
+}
+```
+
+#### 安全性说明
+
+- **进程隔离**: 代码在独立的 subprocess 中执行，与主进程隔离
+- **超时控制**: 默认 30 秒超时限制，防止无限循环
+- **资源限制**: 通过 subprocess 参数限制执行权限
+- **临时文件**: 代码写入临时文件执行后自动清理
+
+**注意**: 建议仅在受控环境中使用，不要执行不受信任的用户输入。
+
+#### 配置说明
+
+pyllm 工具复用 `query_parser` 配置中的 LLM API 参数：
+
+```json
+{
+  "query_parser": {
+    "model": "deepseek-chat",
+    "base_url": "https://api.deepseek.com/chat/completions",
+    "temperature": 0.7,
+    "max_retries": 3,
+    "timeout": 180
+  }
+}
+```
+
+可以通过修改 `temperature` 参数来控制代码生成的随机性：
+- `0.0`: 最确定性的输出，适合需要稳定结果的场景
+- `0.7`: 平衡创造性和稳定性（推荐）
+- `1.0`: 更有创造性，但可能不够稳定
 
 ## 中间文件
 
