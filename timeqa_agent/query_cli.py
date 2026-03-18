@@ -758,6 +758,8 @@ Examples:
             # Save if requested
             if args.save:
                 output_path = Path(args.output)
+                # Create parent directory if needed
+                output_path.parent.mkdir(parents=True, exist_ok=True)
                 with open(output_path, 'w', encoding='utf-8') as f:
                     json.dump(result.to_dict(), f, ensure_ascii=False, indent=2)
                 print(f"\nResult saved to: {output_path}")
@@ -779,6 +781,8 @@ Examples:
             # Save if requested
             if args.save:
                 output_path = Path(args.output)
+                # Create parent directory if needed
+                output_path.parent.mkdir(parents=True, exist_ok=True)
                 with open(output_path, 'w', encoding='utf-8') as f:
                     json.dump(result.to_dict(), f, ensure_ascii=False, indent=2)
                 print(f"\nResult saved to: {output_path}")

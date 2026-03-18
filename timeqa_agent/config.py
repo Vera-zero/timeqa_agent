@@ -140,8 +140,6 @@ class EventValidatorConfig:
 class DisambiguatorConfig:
     """实体消歧配置"""
     # Embedding API 配置
-    embed_model: str = "deepseek-embed"
-    embed_base_url: str = "https://api.deepseek.com/v1"
     embed_batch_size: int = 100  # 每批次处理的实体数
 
     # 本地模型配置

@@ -14,6 +14,7 @@ TimeQA Extraction Pipeline
 from __future__ import annotations
 
 import os
+import time
 import json
 import argparse
 from pathlib import Path
@@ -246,7 +247,7 @@ class ExtractionPipeline:
         print("\n" + "="*50)
         print("阶段 2: 事件抽取")
         print("="*50)
-        
+
         # 加载或使用传入的分块数据
         if chunks_data is None:
             input_path = self.pipeline_config.stage_output_path(Stage.CHUNK)
@@ -569,9 +570,11 @@ class ExtractionPipeline:
                 results["chunk"] = {"num_chunks": len(chunks_data)}
 
             elif stage == Stage.EVENT:
+                event_start_time = time.time()
                 events_data = self.run_event_stage(chunks_data)
                 results["event"] = {"num_events": len(events_data)}
-
+                event_end_time = time.time()
+                print(f"事件抽取耗时: {event_end_time - event_start_time:.2f}秒")
             elif stage == Stage.VALIDATE:
                 events_data = self.run_validate_stage(events_data)
                 results["event_validate"] = {"num_events": len(events_data)}

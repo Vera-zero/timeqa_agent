@@ -63,14 +63,7 @@ class EntityDisambiguator:
         
         # 如果本地模型不可用，则尝试使用API
         if self.local_embed_fn is None:
-            print("警告: 本地嵌入模型不可用，尝试使用API...")
-            # 获取 token
-            if token:
-                self.token = token
-            else:
-                self.token = os.environ.get('VENUS_API_TOKEN') or os.environ.get('OPENAI_API_KEY')
-                if not self.token:
-                    raise ValueError("请设置 VENUS_API_TOKEN 或 OPENAI_API_KEY 环境变量")
+            print("警告: 本地嵌入模型不可用")
         else:
             print("已成功加载本地BGE-M3模型")
         
@@ -105,39 +98,7 @@ class EntityDisambiguator:
                 embeddings = [np.array(emb) for emb in embeddings_list]
                 return embeddings
             except Exception as e:
-                print(f"本地模型调用失败: {e}，尝试使用API...")
-        
-        # 如果本地模型不可用或失败，使用API
-        import json
-        import requests
-        
-        payload = {
-            'model': self.config.embed_model,
-            'input': texts,
-        }
-        
-        headers = {
-            'Content-Type': 'application/json',
-            'Authorization': f'Bearer {self.token}'
-        }
-        
-        try:
-            response = requests.post(
-                self.config.embed_base_url,
-                headers=headers,
-                data=json.dumps(payload),
-                timeout=180,
-            )
-            
-            if response.status_code != 200:
-                raise Exception(f"Embedding API 调用失败: {response.status_code} - {response.text}")
-            
-            result = response.json()
-            embeddings = [np.array(item['embedding']) for item in result['data']]
-            return embeddings
-        except Exception as e:
-            print(f"Embedding API 调用失败: {e}")
-            raise
+                print(f"本地模型调用失败: {e}")
     
     def _get_embeddings(self, entities: List[Entity]) -> Dict[str, np.ndarray]:
         """

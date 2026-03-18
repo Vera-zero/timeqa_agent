@@ -1,11 +1,11 @@
 {
   "chunk": {
     "strategy": "fixed_size",
-    "chunk_size": 1200,
-    "chunk_overlap": 100,
+    "chunk_size": 200,
+    "chunk_overlap": 50,
     "max_sentences": 10,
     "sentence_overlap": 2,
-    "min_chunk_size": 500,
+    "min_chunk_size": 50,
     "max_chunk_size": 2000,
     "preserve_sentences": false
   },
@@ -34,8 +34,6 @@
     "timeout": 60
   },
   "disambiguator": {
-    "embed_model": "deepseek-embed",
-    "embed_base_url": "https://api.deepseek.com/v1",
     "embed_batch_size": 100,
     "similarity_threshold": 0.8,
     "canonical_name_weight": 10.0
